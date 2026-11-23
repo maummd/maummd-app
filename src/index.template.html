@@ -101,6 +101,8 @@
   .dash { display:flex; justify-content:space-around; flex-wrap:wrap; gap:6px; margin-bottom:6px; }
   .donut { display:flex; align-items:center; gap:12px; flex-wrap:wrap; justify-content:center; } .donut .legend { flex-direction:column; align-items:flex-start; }
   .empty { text-align:center; padding:6px 0; }
+  .pastlist { max-height:260px; overflow:auto; margin:8px 0; background:#fff; border-radius:10px; padding:4px 10px; border:1px solid var(--line); }
+  .pastrow { display:flex; align-items:flex-start; margin:6px 0; font-size:14px; } .pastrow input { margin-top:3px; }
   #toast { position:fixed; left:50%; bottom:92px; transform:translateX(-50%); background:#2B2A28; color:#fff; padding:10px 16px; border-radius:10px; font-size:14px; opacity:0; transition:opacity .2s; pointer-events:none; z-index:9; max-width:90vw; }
   #toast.show { opacity:1; }
 </style>

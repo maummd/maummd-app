@@ -245,7 +245,7 @@ function renderFamily(fid, tab) {
   const w = weekOf(fam);
   let body = "";
   if (tab === "") {
-    body = `<div class="card">${phaseStrip(w, fam.phases)}</div>` + phasesFor(fam).map(p => `<div class="card"><div class="row">${phaseIcon(p.n, 38)}<h3 style="color:${p.color};margin:0">${esc(p.name)}</h3></div>${d.sessions.filter(s => s.week >= p.weeks[0] && s.week <= p.weeks[1]).map(s => `<a class="item ${s.week === w ? "now" : ""}" href="#fam/${fid}/s/${s.week}"><span class="wk">${s.week}</span><div><b>${esc(s.topic)}</b><div class="muted">${fmtShort(s.date)} (${wd(s.date)})${d.notes[String(s.week)] ? " · 기록 있음" : ""}</div></div><span class="st ${s.status}">${({ planned: "예정", done: "완료", absent: "불참", moved: "변경" })[s.status] || ""}</span></a>`).join("")}</div>`).join("");
+    body = `<div class="card">${phaseStrip(w, fam.phases)}</div>` + pastEditor(fam, d) + phasesFor(fam).map(p => `<div class="card"><div class="row">${phaseIcon(p.n, 38)}<h3 style="color:${p.color};margin:0">${esc(p.name)}</h3></div>${d.sessions.filter(s => s.week >= p.weeks[0] && s.week <= p.weeks[1]).map(s => `<a class="item ${s.week === w ? "now" : ""}" href="#fam/${fid}/s/${s.week}"><span class="wk">${s.week}</span><div><b>${esc(s.topic)}</b><div class="muted">${fmtShort(s.date)} (${wd(s.date)})${d.notes[String(s.week)] ? " · 기록 있음" : ""}</div></div><span class="st ${s.status}">${({ planned: "예정", done: "완료", absent: "불참", moved: "변경" })[s.status] || ""}</span></a>`).join("")}</div>`).join("");
   } else if (tab === "dash") {
     body = familyDash(fam, d);
   } else if (tab === "hw") {
@@ -258,6 +258,7 @@ function renderFamily(fid, tab) {
   }
   shell(fam.alias, famTabs(fid, tab) + `<p class="muted center">${esc(programOf(fam.program).name)} · ${meet(fam)} · ${w < 1 ? "시작 전" : w > 52 ? "1년 과정 종료" : `지금 ${w}주차`}</p>` + body, { back: "#families" });
   if (tab === "info") bindFamilyInfo(fid, fam, d);
+  if (tab === "") bindPastEditor(fid, fam, d);
 }
 
 // 현황 대시보드
@@ -325,6 +326,31 @@ function bindFamilyInfo(fid, fam, d) {
   document.querySelectorAll("[data-copy]").forEach(b => b.onclick = async () => { try { await navigator.clipboard.writeText(b.dataset.copy); toast("초대 코드를 복사했어요"); } catch (e) { toast("코드를 길게 눌러 복사해 주세요"); } });
   document.querySelectorAll("[data-newinv]").forEach(b => b.onclick = () => act(() => store.put("invites/" + rid(), { familyId: fid, memberId: b.dataset.newinv, active: true, createdAt: new Date().toISOString() }), "초대 코드를 발급했어요"));
   $("#close").onclick = () => act(() => store.set("families/" + fid, { status: fam.status === "closed" ? "active" : "closed" }), "저장했어요");
+}
+
+// 이미 진행한 회기 한꺼번에 완료 처리
+function pastEditor(fam, d) {
+  const t = todayIso(), past = d.sessions.filter(x => x.date <= t && (x.status === "planned" || x.status === "moved")).sort((a, b) => a.week - b.week);
+  if (!past.length) return "";
+  return `<div class="card warn"><div class="spread"><h2 style="margin:0">지난 회기 정리</h2><span class="pill">${past.length}회기</span></div>
+    <p class="muted">날짜가 지났는데 아직 '예정'인 회기예요. 진행한 회기를 골라 한 번에 완료 처리하세요.</p>
+    <div class="row wrap"><button class="btn small" id="pAll">모두 선택</button><button class="btn small" id="pNone">모두 해제</button></div>
+    <div class="pastlist">${past.map(x => `<label class="chk pastrow"><input type="checkbox" data-pw="${x.week}" checked><span><b>${x.week}주차</b> ${fmtShort(x.date)} (${wd(x.date)}) · ${esc(x.topic)}</span></label>`).join("")}</div>
+    <div class="row wrap"><label style="flex:1">처리<select id="pStatus"><option value="done">완료</option><option value="absent">불참</option></select></label></div>
+    <label class="chk"><input type="checkbox" id="pAtt" checked> 완료 회기는 구성원 모두 출석으로 표시</label>
+    <button class="primary block" id="pSave">선택한 회기 처리하기</button></div>`;
+}
+function bindPastEditor(fid, fam, d) {
+  if (!$("#pSave")) return;
+  const boxes = () => Array.from(document.querySelectorAll("[data-pw]"));
+  $("#pAll").onclick = () => boxes().forEach(b => { b.checked = true; });
+  $("#pNone").onclick = () => boxes().forEach(b => { b.checked = false; });
+  $("#pSave").onclick = () => {
+    const weeks = boxes().filter(b => b.checked).map(b => Number(b.dataset.pw)), st = $("#pStatus").value, all = (fam.members || []).map(m => m.id);
+    if (!weeks.length) return toast("처리할 회기를 골라 주세요");
+    const ops = weeks.map(wk => { const x = { ...d.sessions.find(y => y.week === wk) }; delete x.id; x.status = st; if (st === "done" && $("#pAtt").checked && !(x.attendance || []).length) x.attendance = all; if (st === "absent") x.attendance = []; return [`families/${fid}/sessions/${wk}`, x]; });
+    act(() => store.batch(ops), `${weeks.length}개 회기를 ${st === "done" ? "완료" : "불참"}로 처리했어요`);
+  };
 }
 
 // 회기 일정 바꾸기: 요일 · 시간 · 적용 시작 주차
