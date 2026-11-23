@@ -70,6 +70,7 @@ jobs:
           gradle bundleRelease assembleRelease --no-daemon
 
       - name: 파일 이름 정리 (마음엠디)
+        working-directory: ${{ github.workspace }}
         run: |
           mkdir -p out/test out/release
           cp android/app/build/outputs/apk/debug/*.apk out/test/maummd-test.apk
