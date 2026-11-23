@@ -205,7 +205,7 @@ function renderNewFamily() {
   const draw = () => {
     $("#mems").innerHTML = st.mems.map((m, i) => `<div class="mem2"><div class="row"><span class="avatar" style="background:${SERIES[i % SERIES.length]}">${esc(m.alias.slice(0, 1))}</span><input data-i="${i}" data-f="alias" maxlength="12" value="${esc(m.alias)}" placeholder="별칭"><button class="dice" data-dice="${i}" aria-label="새 별칭">🎲</button><button data-del="${i}" aria-label="삭제">✕</button></div>
       <div class="row"><select data-i="${i}" data-f="role">${ROLES.map(o => `<option${o === m.role ? " selected" : ""}>${o}</option>`).join("")}</select><select data-i="${i}" data-f="focus">${FOCUSES.map(o => `<option${o === m.focus ? " selected" : ""}>${o}</option>`).join("")}</select></div></div>`).join("");
-    document.querySelectorAll("#mems [data-f]").forEach(el => el.oninput = el.onchange = () => { st.mems[el.dataset.i][el.dataset.f] = el.value; });
+    document.querySelectorAll("#mems [data-f]").forEach(el => el.oninput = el.onchange = () => { st.mems[el.dataset.i][el.dataset.f] = el.value; if (el.dataset.f === "alias") { const av = el.parentNode.querySelector(".avatar"); if (av) av.textContent = el.value.slice(0, 1); } });
     document.querySelectorAll("#mems [data-del]").forEach(b => b.onclick = () => { st.mems.splice(Number(b.dataset.del), 1); draw(); });
     document.querySelectorAll("#mems [data-dice]").forEach(b => b.onclick = () => { const i = Number(b.dataset.dice); st.mems[i].alias = randomAlias("member", used()); draw(); });
     $("#addm").disabled = st.mems.length >= 8;
