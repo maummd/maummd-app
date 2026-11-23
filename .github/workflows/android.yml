@@ -8,6 +8,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     defaults:
       run:
         working-directory: android
@@ -59,6 +61,7 @@ jobs:
             keytool -list -keystore "$RUNNER_TEMP/upload.jks" -storepass "$KEYSTORE_PASSWORD" > /dev/null \
               || { echo "::error::서명 키 파일 또는 KEYSTORE_PASSWORD가 맞지 않습니다."; exit 1; }
             export KEYSTORE_PATH="$RUNNER_TEMP/upload.jks"
+            echo "HAS_KEY=true" >> "$GITHUB_ENV"
             # 키 이름(alias)은 키 파일에서 직접 읽고, PKCS12 키는 저장소 비밀번호와 키 비밀번호가 같습니다.
             KEY_ALIAS="$(keytool -list -v -keystore "$KEYSTORE_PATH" -storepass "$KEYSTORE_PASSWORD" | sed -n 's/^Alias name: //p' | head -1)"
             export KEY_ALIAS
@@ -85,6 +88,7 @@ jobs:
             echo "== $f"; "$AAPT" dump badging "$f" | grep -E "^package:|^application-label:"
           done
           sha256sum out/release/maummd-release.apk
+          ls -l out/release/ out/test/
 
       - uses: actions/upload-artifact@v4
         with:
@@ -95,3 +99,14 @@ jobs:
         with:
           name: 마음엠디-출시용-AAB-APK
           path: out/release/
+
+      - name: 휴대폰용 바로 받기 링크 만들기 (서명된 경우만)
+        if: ${{ github.ref == 'refs/heads/main' && env.HAS_KEY == 'true' }}
+        working-directory: ${{ github.workspace }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --yes --cleanup-tag 2>/dev/null || true
+          gh release create latest out/release/maummd-release.apk \
+            --title "마음엠디 최신판 (빌드 ${{ github.run_number }})" \
+            --notes "휴대폰에서 maummd-release.apk 를 눌러 받아 설치하세요. 버전 1.0.${{ github.run_number }}" --latest
