@@ -163,7 +163,9 @@ function renderCounselorHome() {
       ${alerts.length ? alerts.map(a => `<a class="alert ${a.lv}" href="${a.href}"><b>${esc(a.fam)}</b> ${esc(a.t)}</a>`).join("") : '<p class="muted">지금 확인할 일이 없어요.</p>'}
     </div>
     ${fams.length ? `<div class="card"><h2>단계별 가족 분포</h2>${donut([...byPhase.map((v, i) => ({ name: `${i + 1}단계`, value: v, color: PHASE_COLORS[i] })), { name: "시작 전", value: before.n, color: "#C9C2B6" }], fams.length + "가족")}</div>` : ""}
+    ${fams.length ? '<button class="btn block" style="margin-bottom:8px" id="opsDoc">📄 프로그램 운영 보고서 (PDF · 인쇄)</button>' : ""}
     <a class="btn primary block" href="#newfam">+ 새 가족 등록</a>`);
+  const od = $("#opsDoc"); if (od) od.onclick = () => exportDoc(opsReportDoc(fams.map(f => ({ fam: famData(f.id).info || f, d: famData(f.id) }))), `마음엠디_운영보고서_${todayIso().replace(/-/g, "")}`);
   const vf = $("#vf"); if (vf) vf.onclick = () => act(() => store.verify(), "인증 메일을 보냈어요. 메일의 링크를 누른 뒤 [인증 완료 확인]을 눌러 주세요");
   const vc = $("#vchk"); if (vc) vc.onclick = async () => {
     let ok = false; try { ok = await store.refresh(); } catch (e) { /* */ }
@@ -259,6 +261,7 @@ function renderFamily(fid, tab) {
   shell(fam.alias, famTabs(fid, tab) + `<p class="muted center">${esc(programOf(fam.program).name)} · ${meet(fam)} · ${w < 1 ? "시작 전" : w > 52 ? "1년 과정 종료" : `지금 ${w}주차`}</p>` + body, { back: "#families" });
   if (tab === "info") bindFamilyInfo(fid, fam, d);
   if (tab === "") bindPastEditor(fid, fam, d);
+  if (tab === "dash") document.querySelectorAll("[data-doc]").forEach(b => b.onclick = () => makeFamilyDoc(b.dataset.doc, fam, d));
 }
 
 // 현황 대시보드
@@ -276,7 +279,12 @@ function familyDash(fam, d) {
     <div class="card"><h2>월별 회기</h2>${monthCols(Object.keys(months).sort().map(k => months[k]))}<p class="muted">완료 ${done}회 · 불참 ${absent}회</p></div>
     <div class="card"><h2>구성원별 출석률</h2><p class="muted">완료한 회기 중 출석 체크한 비율</p>${hbars(att)}</div>
     <div class="card"><h2>구성원별 과제 제출률</h2>${hbars(hw)}</div>
-    <div class="card"><h2>수료 조건</h2>${hbars([{ label: "회기", value: Math.min(1, c.done / 16), text: `${c.done}/16`, color: "#D98C4A" }, ...c.per.map((p, i) => ({ label: p.mem.alias, value: p.total ? p.met / p.total : 0, text: `${p.met}/${p.total}개월`, color: SERIES[i % SERIES.length] }))])}<p class="${c.ok ? "green" : "muted"}">${c.ok ? "수료 조건을 충족했어요." : "16주 이상 + 구성원별 매월 과제 1회 이상"}</p></div>`;
+    <div class="card"><h2>수료 조건</h2>${hbars([{ label: "회기", value: Math.min(1, c.done / 16), text: `${c.done}/16`, color: "#D98C4A" }, ...c.per.map((p, i) => ({ label: p.mem.alias, value: p.total ? p.met / p.total : 0, text: `${p.met}/${p.total}개월`, color: SERIES[i % SERIES.length] }))])}<p class="${c.ok ? "green" : "muted"}">${c.ok ? "수료 조건을 충족했어요." : "16주 이상 + 구성원별 매월 과제 1회 이상"}</p></div>
+    <div class="card"><h2>📄 문서 만들기</h2><p class="muted">A4 문서로 만들어 PDF로 저장하거나 인쇄 · 공유할 수 있어요.</p>
+      <button class="btn block" style="margin-top:8px" data-doc="guide">가족 안내 문서 <span class="muted">· 가족 공유용 (상담 기록 · 검사 점수 없음)</span></button>
+      <button class="btn block" style="margin-top:8px" data-doc="report">상담 경과 보고서 <span class="red">· 비밀보장 자료</span></button>
+      <label>수료증에 넣을 이름 <span class="muted">(선택 · 저장하지 않아요. 비우면 별칭)</span><input id="certName" maxlength="40" placeholder="예: 홍길동 가족"></label>
+      <button class="btn block" style="margin-top:8px" data-doc="cert"${c.ok ? "" : " disabled"}>수료증${c.ok ? "" : " <span class=\"muted\">· 수료 조건 충족 후</span>"}</button></div>`;
 }
 
 // 평가 그래프
@@ -617,3 +625,97 @@ store.onAuth(u => {
   }
   render();
 });
+
+
+// ---------- 문서 만들기 (PDF · 인쇄 · 공유) ----------
+// 앱(안드로이드)에서는 NativeDoc.printHtml → 인쇄 화면에서 'PDF로 저장', 브라우저에서는 .html 파일로 저장합니다.
+const DOC_CSS = `@page{size:A4;margin:16mm 15mm}*{box-sizing:border-box}body{font-family:'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif;color:#2b2a27;font-size:10.5pt;line-height:1.6;margin:0}
+.top{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:3px solid #2F6B5E;padding-bottom:6px;margin-bottom:12px}.top h1{font-size:17pt;margin:0;color:#2F6B5E}.top .meta{font-size:9pt;color:#666;text-align:right}
+.conf{display:inline-block;border:1.5px solid #B04A3A;color:#B04A3A;font-weight:700;font-size:9pt;padding:1px 8px;border-radius:4px;margin-bottom:8px}
+h2{font-size:12pt;color:#2F6B5E;margin:16px 0 6px;border-left:4px solid #D98C4A;padding-left:7px}h3{font-size:10.5pt;margin:10px 0 4px}
+table{width:100%;border-collapse:collapse;margin:4px 0 8px;font-size:9.5pt}th,td{border:1px solid #d8d1c4;padding:4px 6px;text-align:left;vertical-align:top}th{background:#f2eee6}td.c,th.c{text-align:center}tr{page-break-inside:avoid}
+.info td:nth-child(odd){background:#f7f4ee;width:17%;font-weight:700}.pre{white-space:pre-wrap}.muted{color:#777}.red{color:#B04A3A;font-weight:700}.bar{display:inline-block;height:8px;border-radius:3px;background:#2F6B5E;vertical-align:middle}
+.foot{margin-top:18px;border-top:1px solid #d8d1c4;padding-top:6px;font-size:8.5pt;color:#777}
+.cert{border:6px double #2F6B5E;border-radius:14px;padding:46px 40px;text-align:center;margin-top:30px}.cert h1{font-size:30pt;letter-spacing:12px;color:#2F6B5E;margin:0 0 30px}.cert .nm{font-size:18pt;font-weight:700;margin:16px 0}.cert p{font-size:12pt;line-height:2}.cert .org{margin-top:40px;font-size:14pt;font-weight:700}`;
+function docShell(title, body, { confidential = false, note = "" } = {}) {
+  return `<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><title>${esc(title)}</title><style>${DOC_CSS}</style></head><body>
+    ${confidential ? '<div class="conf">비밀보장 · 상담 자료</div>' : ""}
+    <div class="top"><h1>${esc(title)}</h1><div class="meta">마음엠디 · 가족상담연구소 마음재활정원<br>작성 ${esc(fmt(todayIso()))}</div></div>${body}
+    <div class="foot">${note ? esc(note) + "<br>" : ""}${confidential ? "본 문서는 상담 내용과 심리검사 결과가 담긴 비밀보장 자료입니다. 내담자의 동의 없이 제3자에게 제공하거나 열람하게 해서는 안 됩니다.<br>" : ""}마음엠디 · maumm.org</div></body></html>`;
+}
+function exportDoc(html, name) {
+  if (window.NativeDoc && typeof window.NativeDoc.printHtml === "function") { window.NativeDoc.printHtml(name, html); return; }
+  try { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([html], { type: "text/html" })); a.download = name + ".html"; document.body.appendChild(a); a.click(); a.remove(); toast("문서 파일을 저장했어요. 열어서 인쇄 · PDF 저장하세요"); }
+  catch (e) { toast("문서를 만들지 못했어요"); }
+}
+const ST_NAME = { planned: "예정", done: "완료", absent: "불참", moved: "변경" };
+function famInfoTable(fam, d) {
+  const w = weekOf(fam), mems = fam.members || [];
+  return `<table class="info"><tr><td>가족</td><td>${esc(fam.alias)}</td><td>관리 번호</td><td>${esc(fam.code || "-")}</td></tr>
+    <tr><td>프로그램</td><td>${esc(programOf(fam.program).name)}</td><td>회기 일정</td><td>${esc(meet(fam))}</td></tr>
+    <tr><td>시작일</td><td>${esc(fmt(fam.startDate))}</td><td>현재</td><td>${w < 1 ? "시작 전" : w > 52 ? "1년 과정 종료" : `${w}주차 · ${esc(phaseOf(w, fam).name)}`}</td></tr>
+    <tr><td>구성원</td><td colspan="3">${mems.map(m => esc(m.alias) + (m.role ? ` (${esc(m.role)})` : "")).join(", ") || "-"}</td></tr></table>`;
+}
+function progressTables(fam, d) {
+  const mems = fam.members || [], doneS = d.sessions.filter(s => s.status === "done"), absent = d.sessions.filter(s => s.status === "absent").length;
+  const past = d.sessions.filter(s => s.date <= todayIso()).length, c = completion(fam, d);
+  const pct = (a, b) => b ? Math.round(a / b * 100) + "%" : "-";
+  return `<table><tr><th class="c">완료 회기</th><th class="c">불참</th><th class="c">진행률</th><th class="c">수료 조건</th></tr><tr><td class="c">${doneS.length}회</td><td class="c">${absent}회</td><td class="c">${pct(doneS.length, past)}</td><td class="c">${c.ok ? "충족" : `회기 ${c.done}/16`}</td></tr></table>
+    <table><tr><th>구성원</th><th class="c">출석</th><th class="c">과제 제출</th><th class="c">과제 제출한 달</th></tr>${mems.map(m => {
+      const n = doneS.filter(s => (s.attendance || []).includes(m.id)).length, all = d.homework.filter(h => h.forMember === m.id), sub = all.filter(h => h.submission).length, cp = c.per.find(p => p.mem.id === m.id) || { met: 0, total: 0 };
+      return `<tr><td>${esc(m.alias)}</td><td class="c">${n}/${doneS.length} (${pct(n, doneS.length)})</td><td class="c">${sub}/${all.length} (${pct(sub, all.length)})</td><td class="c">${cp.met}/${cp.total}개월</td></tr>`; }).join("")}</table>`;
+}
+function familyGuideDoc(fam, d) {
+  const t = todayIso(), next = d.sessions.filter(s => s.date >= t && s.status !== "done" && s.status !== "absent").sort((a, b) => a.week - b.week).slice(0, 8);
+  const past = d.sessions.filter(s => s.status === "done" || s.status === "absent").sort((a, b) => a.week - b.week);
+  const row = s => `<tr><td class="c">${s.week}</td><td>${esc(fmt(s.date))} (${wd(s.date)})</td><td>${esc(phaseOf(s.week, fam).short)}</td><td>${esc(s.topic)}</td><td class="c">${ST_NAME[s.status] || ""}</td></tr>`;
+  const head = '<tr><th class="c">주차</th><th>날짜</th><th>단계</th><th>주제</th><th class="c">상태</th></tr>';
+  return docShell("가족 상담 안내", `${famInfoTable(fam, d)}
+    <h2>지금까지의 진행</h2>${progressTables(fam, d)}
+    <p class="muted" style="font-size:9pt;margin:0">수료 조건: 16주 이상 진행 + 구성원별 매월 과제 1회 이상 제출</p>
+    <h2>다가오는 회기</h2>${next.length ? `<table>${head}${next.map(row).join("")}</table>` : '<p class="muted">예정된 회기가 없어요.</p>'}
+    <h2>지난 회기</h2>${past.length ? `<table>${head}${past.map(row).join("")}</table>` : '<p class="muted">아직 진행한 회기가 없어요.</p>'}`,
+    { note: "가족 공유용 문서입니다. 상담 기록과 심리검사 결과는 담지 않았습니다." });
+}
+function progressReportDoc(fam, d) {
+  const mems = fam.members || [];
+  const evalTable = (kind, label, bands) => `<h3>${label}</h3><table><tr><th>구성원</th>${EVAL_POINTS.map(p => `<th class="c">${esc(p.name)}</th>`).join("")}</tr>${mems.map(m => `<tr><td>${esc(m.alias)}</td>${EVAL_POINTS.map(p => { const e = d.evals.find(x => x.kind === kind && x.point === p.key && x.memberId === m.id); if (!e) return '<td class="c muted">-</td>'; return `<td class="c"><b>${e.total}</b> ${kind === "FAM" ? `<span class="muted">평균 ${Number(e.avg).toFixed(1)}</span>` : `<span class="muted">${esc(band(bands, e.total))}</span>`}${kind === "PHQ9" && Array.isArray(e.items) && Number(e.items[8]) > 0 ? '<div class="red">9번 문항 응답</div>' : ""}</td>`; }).join("")}</tr>`).join("")}</table>`;
+  const notes = d.sessions.filter(s => d.notes[String(s.week)]).sort((a, b) => a.week - b.week).map(s => {
+    const n = d.notes[String(s.week)], att = (s.attendance || []).map(id => memberName(fam, id)).join(", ");
+    return `<tr><td class="c">${s.week}<div class="muted">${esc(fmtShort(s.date))}</div></td><td>${esc(s.topic)}<div class="muted">출석: ${esc(att || "-")}</div>${n.risk ? '<div class="red">안전 확인 필요</div>' : ""}</td><td class="pre">${n.s ? "<b>S</b> " + esc(n.s) + "\n" : ""}${n.o ? "<b>O</b> " + esc(n.o) + "\n" : ""}${n.a ? "<b>A</b> " + esc(n.a) + "\n" : ""}${n.p ? "<b>P</b> " + esc(n.p) : ""}</td></tr>`; }).join("");
+  const hw = d.homework.slice().sort((a, b) => a.week - b.week).map(h => `<tr><td class="c">${h.week}</td><td>${esc(memberName(fam, h.forMember))}</td><td>${esc(h.title)}</td><td class="c">${h.submission ? "제출" : "미제출"}</td><td class="c">${h.feedback ? "완료" : "-"}</td></tr>`).join("");
+  return docShell("상담 경과 보고서", `${famInfoTable(fam, d)}
+    <h2>진행 현황</h2>${progressTables(fam, d)}
+    <h2>평가 결과</h2>${evalTable("PHQ9", "PHQ-9 (우울, 0~27)", PHQ9_BANDS)}${evalTable("GAD7", "GAD-7 (불안, 0~21)", GAD7_BANDS)}${evalTable("FAM", "가족기능 자체 평가 (10~50, 높을수록 좋음)")}
+    <h2>회기 기록 (SOAP)</h2>${notes ? `<table><tr><th class="c" style="width:10%">주차</th><th style="width:26%">주제 · 출석</th><th>기록</th></tr>${notes}</table>` : '<p class="muted">작성된 회기 기록이 없어요.</p>'}
+    <h2>과제</h2>${hw ? `<table><tr><th class="c">주차</th><th>구성원</th><th>과제</th><th class="c">제출</th><th class="c">피드백</th></tr>${hw}</table>` : '<p class="muted">낸 과제가 없어요.</p>'}`, { confidential: true });
+}
+function certDoc(fam, d, name) {
+  const c = completion(fam, d), who = name || fam.alias;
+  const last = d.sessions.filter(s => s.status === "done").sort((a, b) => b.week - a.week)[0];
+  return `<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><title>수료증</title><style>${DOC_CSS}</style></head><body><div class="cert">
+    <h1>수 료 증</h1><div class="nm">${esc(who)}</div>
+    <p>위 가족은 마음엠디 「${esc(programOf(fam.program).name)}」 가족치료 프로그램에<br>${esc(fmt(fam.startDate))}부터 ${esc(fmt(last ? last.date : todayIso()))}까지 성실히 참여하여<br>총 ${c.done}회기를 마치고 수료 조건을 충족하였기에 이 증서를 드립니다.</p>
+    <p style="margin-top:30px">${esc(fmt(todayIso()))}</p><div class="org">가족상담연구소 마음재활정원</div></div></body></html>`;
+}
+function opsReportDoc(list) {
+  const avg = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : null, f1 = v => v == null ? "-" : v.toFixed(1);
+  const firstLast = (d, kind) => { const by = {}; d.evals.filter(e => e.kind === kind).forEach(e => { (by[e.memberId] = by[e.memberId] || []).push(e); }); const order = k => EVAL_POINTS.findIndex(p => p.key === k);
+    const pairs = Object.values(by).map(a => a.sort((x, y) => order(x.point) - order(y.point))).filter(a => a.length); return { first: avg(pairs.map(a => a[0].total)), last: avg(pairs.filter(a => a.length > 1).map(a => a[a.length - 1].total)) }; };
+  let totDone = 0, totAbsent = 0, nCert = 0;
+  const rows = list.map(({ fam, d }) => {
+    const w = weekOf(fam), done = d.sessions.filter(s => s.status === "done"), absent = d.sessions.filter(s => s.status === "absent").length, mems = fam.members || [];
+    const attR = done.length && mems.length ? done.reduce((n, s) => n + (s.attendance || []).length, 0) / (done.length * mems.length) : null;
+    const hwAll = d.homework.length, hwSub = d.homework.filter(h => h.submission).length, c = completion(fam, d), ph = firstLast(d, "PHQ9"), ga = firstLast(d, "GAD7");
+    totDone += done.length; totAbsent += absent; if (c.ok) nCert++;
+    return `<tr><td>${esc(fam.alias)}</td><td class="c">${w < 1 ? "시작 전" : w > 52 ? "종료" : w + "주"}</td><td class="c">${done.length}</td><td class="c">${absent}</td><td class="c">${attR == null ? "-" : Math.round(attR * 100) + "%"}</td><td class="c">${hwAll ? Math.round(hwSub / hwAll * 100) + "%" : "-"}</td><td class="c">${f1(ph.first)} → ${f1(ph.last)}</td><td class="c">${f1(ga.first)} → ${f1(ga.last)}</td><td class="c">${c.ok ? "충족" : "-"}</td></tr>`; }).join("");
+  return docShell("프로그램 운영 보고서", `<table class="info"><tr><td>진행 중 가족</td><td>${list.length}가족</td><td>수료 조건 충족</td><td>${nCert}가족</td></tr><tr><td>완료 회기</td><td>${totDone}회</td><td>불참</td><td>${totAbsent}회</td></tr></table>
+    <h2>가족별 현황</h2><table><tr><th>가족</th><th class="c">주차</th><th class="c">완료</th><th class="c">불참</th><th class="c">출석률</th><th class="c">과제 제출</th><th class="c">PHQ-9<br>시작→최근</th><th class="c">GAD-7<br>시작→최근</th><th class="c">수료</th></tr>${rows}</table>
+    <p class="muted" style="font-size:9pt">PHQ-9 · GAD-7은 가족 구성원 평균이며 낮을수록 증상이 적습니다. '최근'은 두 번 이상 검사한 구성원만 계산합니다. 가족 이름은 앱의 별칭입니다.</p>`, { confidential: true });
+}
+function makeFamilyDoc(kind, fam, d) {
+  const stamp = todayIso().replace(/-/g, ""), nm = String(fam.alias || "가족").replace(/\s/g, "");
+  if (kind === "guide") exportDoc(familyGuideDoc(fam, d), `${nm}_상담안내_${stamp}`);
+  else if (kind === "report") { toast("비밀보장 자료예요. 내담자 동의 범위 안에서만 공유하세요"); exportDoc(progressReportDoc(fam, d), `${nm}_상담경과보고서_${stamp}`); }
+  else if (kind === "cert") { const n = ($("#certName") && $("#certName").value.trim()) || ""; exportDoc(certDoc(fam, d, n), `${nm}_수료증_${stamp}`); }
+}

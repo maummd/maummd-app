@@ -1,6 +1,12 @@
 package com.maumm.maummd;
 
 import android.app.Activity;
+import android.widget.Toast;
+import android.webkit.JavascriptInterface;
+import android.print.PrintManager;
+import android.print.PrintDocumentAdapter;
+import android.print.PrintAttributes;
+import android.content.Context;
 import android.content.Intent;
 import android.graphics.Color;
 import android.net.Uri;
@@ -72,12 +78,47 @@ public class MainActivity extends Activity {
             }
         });
 
+        webView.addJavascriptInterface(new DocBridge(), "NativeDoc");
+
         if (savedInstanceState != null) webView.restoreState(savedInstanceState);
         else webView.loadUrl("https://" + HOST + "/assets/index.html");
 
         if (Build.VERSION.SDK_INT >= 33) {
             getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
                 OnBackInvokedDispatcher.PRIORITY_DEFAULT, this::handleBack);
+        }
+    }
+
+    /** 화면(JavaScript)의 문서를 안드로이드 인쇄 화면으로 엽니다. 'PDF로 저장'을 고르면 PDF가 되고, 저장한 PDF를 공유할 수 있습니다. */
+    private WebView printView; // 인쇄가 끝날 때까지 붙잡아 둡니다
+    private class DocBridge {
+        @JavascriptInterface
+        public void printHtml(String title, String html) {
+            runOnUiThread(() -> {
+                final String jobName = (title == null || title.isEmpty()) ? "document" : title;
+                WebView pv = new WebView(MainActivity.this);
+                pv.getSettings().setJavaScriptEnabled(false);
+                pv.setWebViewClient(new WebViewClient() {
+                    private boolean started = false;
+                    @Override
+                    public void onPageFinished(WebView view, String url) {
+                        if (started) return;
+                        started = true;
+                        try {
+                            PrintManager pm = (PrintManager) getSystemService(Context.PRINT_SERVICE);
+                            PrintDocumentAdapter adapter = view.createPrintDocumentAdapter(jobName);
+                            PrintAttributes attrs = new PrintAttributes.Builder()
+                                .setMediaSize(PrintAttributes.MediaSize.ISO_A4)
+                                .build();
+                            pm.print(jobName, adapter, attrs);
+                        } catch (Exception e) {
+                            Toast.makeText(MainActivity.this, "인쇄 화면을 열 수 없어요", Toast.LENGTH_SHORT).show();
+                        }
+                    }
+                });
+                printView = pv;
+                pv.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null);
+            });
         }
     }
 
