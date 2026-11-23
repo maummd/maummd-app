@@ -3,7 +3,7 @@ import { PROGRAMS, programOf, ROLES, FOCUSES, randomAlias } from "./programs.js"
 import { ring, phaseStrip, hbars, lineChart, radar, monthCols, donut, PHASE_COLORS, SERIES } from "./charts.js";
 import { phaseIcon, gardenHero, journey, programIcon, emptyArt } from "./art.js";
 import { firebaseStore, localStore } from "./store.js";
-import { FIREBASE_CONFIG, COUNSELOR_EMAIL } from "./config.js";
+import { FIREBASE_CONFIG, COUNSELOR_EMAILS } from "./config.js";
 
 // ---------- 기본 도구 ----------
 const $ = s => document.querySelector(s);
@@ -20,6 +20,7 @@ const sessionDate = (fam, w) => addDays(fam.startDate, 7 * (w - 1));
 const weekOf = (fam, iso = todayIso()) => Math.floor((days(iso) - days(fam.startDate)) / 7) + 1;
 const WD = "일월화수목금토";
 const wd = iso => iso ? WD[weekday(iso)] : "";
+const meet = fam => `매주 ${WD[fam.meetDay != null ? fam.meetDay : weekday(fam.startDate)]}요일${fam.time ? " " + fam.time : ""}`;
 const phasesFor = fam => ((fam && fam.phases) || programOf(fam && fam.program).phases).map((nm, i) => ({ n: i + 1, name: `${i + 1}단계 · ${nm}`, short: nm, weeks: [i * 13 + 1, i * 13 + 13], color: PHASE_COLORS[i] }));
 const phaseOf = (w, fam) => phasesFor(fam)[Math.max(0, Math.min(3, Math.floor((w - 1) / 13)))];
 const FAM_SHORT = ["감정 표현", "대화로 해결", "서로 존중", "함께 즐거움", "도움 요청", "의견 존중", "규칙 · 역할", "생각 바꾸기", "배운 것 실천", "희망"];
@@ -52,7 +53,7 @@ async function act(fn, ok) {
 }
 
 // ---------- 상태 ----------
-const store = FIREBASE_CONFIG ? firebaseStore(FIREBASE_CONFIG, COUNSELOR_EMAIL) : localStore();
+const store = FIREBASE_CONFIG ? firebaseStore(FIREBASE_CONFIG, COUNSELOR_EMAILS) : localStore();
 const S = { user: null, families: [], fam: {}, subs: [], famSubs: {}, route: "" };
 function clearSubs() { S.subs.forEach(u => u && u()); S.subs = []; }
 function famData(fid) { return S.fam[fid] || (S.fam[fid] = { info: null, sessions: [], homework: [], evals: [], notes: {}, invites: [] }); }
@@ -251,11 +252,11 @@ function renderFamily(fid, tab) {
     const hw = d.homework.slice().sort((a, b) => b.week - a.week || String(b.assignedAt).localeCompare(String(a.assignedAt)));
     body = `<div class="card"><h2>과제 ${hw.length}건</h2>${hw.length ? hw.map(h => `<a class="item" href="#fam/${fid}/h/${h.id}"><span class="wk">${h.week}</span><div><b>${esc(h.title)}</b><div class="muted">${esc(memberName(fam, h.forMember))} · ${HW_TYPES[h.type] ? HW_TYPES[h.type].name : ""}</div></div><span class="st ${h.feedback ? "done" : h.submission ? "moved" : "planned"}">${h.feedback ? "피드백 완료" : h.submission ? "제출됨" : "미제출"}</span></a>`).join("") : emptyArt("회기 화면에서 과제를 낼 수 있어요.")}</div>`;
   } else if (tab === "eval") {
-    body = evalCharts(fam, d) + evalSummary(fam, d) + `<div class="card"><h2>평가 입력</h2><p class="muted">PHQ-9 · GAD-7은 종이 검사지로 실시한 뒤 문항별 점수를 입력하세요.</p>${EVAL_POINTS.map(p => `<h3>${p.name} <span class="muted">(${p.week}주차 · ${fmtShort(sessionDate(fam, p.week))})</span></h3><div class="row wrap">${(fam.members || []).map(m => `<a class="btn small" href="#fam/${fid}/e/${p.key}/${m.id}">${esc(m.alias)}</a>`).join("")}</div>`).join("")}</div>`;
+    body = evalCharts(fam, d) + evalSummary(fam, d) + `<div class="card"><h2>평가 입력</h2><p class="muted">PHQ-9 · GAD-7은 종이 검사지로 실시한 뒤 문항별 점수를 입력하세요.</p>${EVAL_POINTS.map(p => `<h3>${p.name} <span class="muted">(${p.week}주차 · ${fmtShort((d.sessions.find(x => x.week === p.week) || {}).date || sessionDate(fam, p.week))})</span></h3><div class="row wrap">${(fam.members || []).map(m => `<a class="btn small" href="#fam/${fid}/e/${p.key}/${m.id}">${esc(m.alias)}</a>`).join("")}</div>`).join("")}</div>`;
   } else if (tab === "info") {
     body = familyInfo(fid, fam, d);
   }
-  shell(fam.alias, famTabs(fid, tab) + `<p class="muted center">${esc(programOf(fam.program).name)} · 매주 ${wd(fam.startDate)}요일 · ${w < 1 ? "시작 전" : w > 52 ? "1년 과정 종료" : `지금 ${w}주차`}</p>` + body, { back: "#families" });
+  shell(fam.alias, famTabs(fid, tab) + `<p class="muted center">${esc(programOf(fam.program).name)} · ${meet(fam)} · ${w < 1 ? "시작 전" : w > 52 ? "1년 과정 종료" : `지금 ${w}주차`}</p>` + body, { back: "#families" });
   if (tab === "info") bindFamilyInfo(fid, fam, d);
 }
 
@@ -311,7 +312,7 @@ function completion(fam, d) {
 }
 function familyInfo(fid, fam, d) {
   const c = completion(fam, d);
-  return `<div class="card"><h2>가족 정보</h2><div class="item"><div>관리 번호</div><b class="code">${esc(fam.code || "-")}</b></div><div class="item"><div>프로그램</div><b>${esc(programOf(fam.program).name)}</b></div><div class="item"><div>회기 요일</div><b>매주 ${wd(fam.startDate)}요일</b></div></div><div class="card"><h2>구성원과 초대 코드</h2><p class="muted">구성원마다 코드를 전달하면, 그 사람만 자기 과제와 일정을 볼 수 있어요.</p>
+  return `<div class="card"><h2>가족 정보</h2><div class="item"><div>관리 번호</div><b class="code">${esc(fam.code || "-")}</b></div><div class="item"><div>프로그램</div><b>${esc(programOf(fam.program).name)}</b></div><div class="item"><div>회기 일정</div><b>${meet(fam)}</b></div></div>${scheduleEditor(fam, d)}${memberEditor(fam)}<div class="card"><h2>구성원과 초대 코드</h2><p class="muted">구성원마다 코드를 전달하면, 그 사람만 자기 과제와 일정을 볼 수 있어요.</p>
     ${(fam.members || []).map(m => { const inv = d.invites.find(i => i.memberId === m.id && i.active); return `<div class="item"><div><b>${esc(m.alias)}</b> ${m.role ? `<span class="pill gray">${esc(m.role)}</span> ` : ""}<span class="pill">${esc(m.focus)}</span><div class="muted">초대 코드: <b class="code">${inv ? esc(inv.id) : "없음"}</b></div></div>${inv ? `<button data-copy="${esc(inv.id)}">복사</button>` : `<button data-newinv="${esc(m.id)}">발급</button>`}</div>`; }).join("")}</div>
     <div class="card"><h2>수료 조건</h2><p class="muted">16주 이상 진행 + 구성원별 매월 과제 1회 이상 제출 (계약서 제3조 5항)</p>
       <div class="item"><div>완료한 회기</div><b>${c.done} / 16주 ${c.done >= 16 ? "✓" : ""}</b></div>
@@ -319,10 +320,64 @@ function familyInfo(fid, fam, d) {
       <p class="${c.ok ? "green" : "muted"}">${c.ok ? "수료 조건을 충족했어요." : "아직 수료 조건을 채우는 중이에요."}</p></div>
     <div class="card"><h2>가족 관리</h2><div class="row wrap"><button id="close">${fam.status === "closed" ? "종결 취소" : "종결 처리"}</button></div></div>`;
 }
-function bindFamilyInfo(fid, fam) {
+function bindFamilyInfo(fid, fam, d) {
+  bindScheduleEditor(fid, fam, d); bindMemberEditor(fid, fam);
   document.querySelectorAll("[data-copy]").forEach(b => b.onclick = async () => { try { await navigator.clipboard.writeText(b.dataset.copy); toast("초대 코드를 복사했어요"); } catch (e) { toast("코드를 길게 눌러 복사해 주세요"); } });
   document.querySelectorAll("[data-newinv]").forEach(b => b.onclick = () => act(() => store.put("invites/" + rid(), { familyId: fid, memberId: b.dataset.newinv, active: true, createdAt: new Date().toISOString() }), "초대 코드를 발급했어요"));
   $("#close").onclick = () => act(() => store.set("families/" + fid, { status: fam.status === "closed" ? "active" : "closed" }), "저장했어요");
+}
+
+// 회기 일정 바꾸기: 요일 · 시간 · 적용 시작 주차
+function scheduleEditor(fam, d) {
+  const t = todayIso(), nextS = d.sessions.filter(x => x.status === "planned" && x.date >= t).sort((a, b) => a.week - b.week)[0];
+  const from = nextS ? nextS.week : 1, base = nextS ? nextS.date : fam.startDate;
+  return `<div class="card"><h2>회기 일정 바꾸기</h2><p class="muted">요일이나 시간을 바꾸면 고른 주차부터 끝까지 예정 회기의 날짜가 다시 잡혀요. 이미 완료 · 불참으로 기록한 회기는 그대로 둬요.</p>
+    <label>가족 별칭</label><div class="row"><input id="eAlias" maxlength="20" value="${esc(fam.alias)}"><button class="dice" id="eDice" aria-label="새 별칭">🎲</button></div>
+    <div class="row"><label style="flex:1">적용 시작 주차<select id="eFrom">${d.sessions.map(x => `<option value="${x.week}"${x.week === from ? " selected" : ""}>${x.week}주차 (${fmtShort(x.date)})</option>`).join("")}</select></label>
+    <label style="flex:1">새 첫 날짜<input id="eDate" type="date" value="${base}"></label></div>
+    <div class="row"><label style="flex:1">상담 시간<input id="eTime" type="time" value="${esc(fam.time || "")}"></label><label style="flex:1">간격<select id="eGap"><option value="7">매주</option><option value="14">격주</option></select></label></div>
+    <p class="muted" id="ePrev"></p>
+    <button class="primary block" id="eSave">일정 저장</button></div>`;
+}
+function bindScheduleEditor(fid, fam, d) {
+  const prev = () => { const v = $("#eDate").value, f = Number($("#eFrom").value), gap = Number($("#eGap").value), last = d.sessions.length;
+    $("#ePrev").textContent = /^\d{4}-\d{2}-\d{2}$/.test(v) ? `${f}주차부터 ${gap === 7 ? "매주" : "격주"} ${wd(v)}요일 → 마지막 ${last}주차는 ${fmt(addDays(v, gap * (last - f)))}` : ""; };
+  ["eDate", "eFrom", "eGap"].forEach(k => { $("#" + k).onchange = $("#" + k).oninput = prev; }); prev();
+  $("#eDice").onclick = () => { $("#eAlias").value = randomAlias("family"); };
+  $("#eSave").onclick = () => {
+    const v = $("#eDate").value, f = Number($("#eFrom").value), gap = Number($("#eGap").value), alias = $("#eAlias").value.trim(), time = $("#eTime").value;
+    if (!alias) return toast("가족 별칭을 입력해 주세요");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return toast("새 첫 날짜를 골라 주세요");
+    const fs = d.sessions.find(x => x.week === f), changed = !fs || fs.date !== v || gap !== 7;
+    const ops = [];
+    if (changed) d.sessions.filter(x => x.week >= f && x.status !== "done" && x.status !== "absent").forEach(x => { const o = { ...x, date: addDays(v, gap * (x.week - f)) }; delete o.id; ops.push([`families/${fid}/sessions/${x.week}`, o]); });
+    const info = { ...fam, alias, time, meetDay: weekday(v), startDate: changed ? addDays(v, -7 * (f - 1)) : fam.startDate };
+    delete info.id; ops.push(["families/" + fid, info]);
+    act(() => store.batch(ops), changed ? `일정을 바꿨어요 (${ops.length - 1}개 회기)` : "저장했어요");
+  };
+}
+
+// 구성원 수정 · 추가
+function memberEditor(fam) {
+  return `<div class="card"><h2>구성원 수정</h2><p class="muted">별칭 · 역할 · 초점을 바꾸거나 구성원을 추가할 수 있어요. 새 구성원은 초대 코드가 바로 발급돼요.</p>
+    ${(fam.members || []).map((m, i) => `<div class="mem2" data-mi="${i}"><div class="row"><span class="avatar" style="background:${SERIES[i % SERIES.length]}">${esc(m.alias.slice(0, 1))}</span><input data-mf="alias" maxlength="12" value="${esc(m.alias)}"><button class="dice" data-mdice="${i}">🎲</button></div>
+      <div class="row"><select data-mf="role">${ROLES.map(o => `<option${o === m.role ? " selected" : ""}>${o}</option>`).join("")}</select><select data-mf="focus">${FOCUSES.map(o => `<option${o === m.focus ? " selected" : ""}>${o}</option>`).join("")}</select></div></div>`).join("")}
+    <div class="row wrap"><button id="mAdd"${(fam.members || []).length >= 8 ? " disabled" : ""}>+ 구성원 추가</button><button class="primary" id="mSave" style="margin-top:0">구성원 저장</button></div></div>`;
+}
+function bindMemberEditor(fid, fam) {
+  const read = () => Array.from(document.querySelectorAll("[data-mi]")).map(row => { const m = (fam.members || [])[Number(row.dataset.mi)]; const g = k => row.querySelector(`[data-mf="${k}"]`).value.trim(); return { ...m, alias: g("alias"), role: g("role"), focus: g("focus") }; });
+  document.querySelectorAll("[data-mdice]").forEach(b => b.onclick = () => { const row = b.closest("[data-mi]"), inp = row.querySelector('[data-mf="alias"]'); inp.value = randomAlias("member", read().map(m => m.alias)); row.querySelector(".avatar").textContent = inp.value.slice(0, 1); });
+  const save = (extra = []) => {
+    const members = read().concat(extra);
+    if (members.some(m => !m.alias)) return toast("별칭을 비워 둘 수 없어요");
+    if (new Set(members.map(m => m.alias)).size !== members.length) return toast("구성원 별칭이 겹쳐요");
+    const info = { ...fam, members }; delete info.id;
+    const ops = [["families/" + fid, info]];
+    extra.forEach(m => ops.push(["invites/" + rid(), { familyId: fid, memberId: m.id, active: true, createdAt: new Date().toISOString() }]));
+    return act(() => store.batch(ops), extra.length ? "구성원을 추가하고 초대 코드를 발급했어요" : "구성원을 저장했어요");
+  };
+  $("#mSave").onclick = () => save();
+  $("#mAdd").onclick = () => save([{ id: "m" + ((fam.members || []).length + 1) + rid(3).toLowerCase(), alias: randomAlias("member", read().map(m => m.alias)), role: "자녀", focus: "의사소통" }]);
 }
 
 // ---------- 상담자: 회기 상세 ----------
@@ -338,7 +393,8 @@ function renderSession(fid, w) {
       <label>주제<input id="topic" value="${esc(s.topic)}"></label>
       <label>회기 목표<textarea id="goal" rows="2">${esc(s.goal)}</textarea></label>
       <label>상태<select id="status">${[["planned", "예정"], ["done", "완료"], ["absent", "불참"], ["moved", "일정 변경"]].map(([k, v]) => `<option value="${k}"${s.status === k ? " selected" : ""}>${v}</option>`).join("")}</select></label>
-      <label>날짜<input id="date" type="date" value="${esc(s.date)}"></label>
+      <div class="row"><label style="flex:1.4">날짜<input id="date" type="date" value="${esc(s.date)}"></label><label style="flex:1">시간<input id="time" type="time" value="${esc(s.time || fam.time || "")}"></label></div>
+      <label class="chk"><input type="checkbox" id="shiftAfter"> 날짜를 바꾸면 이후 예정 회기도 같은 만큼 밀기</label>
       <div class="lbl">출석</div><div class="row wrap">${(fam.members || []).map(m => `<label class="chk"><input type="checkbox" data-att="${m.id}"${(s.attendance || []).includes(m.id) ? " checked" : ""}> ${esc(m.alias)}</label>`).join("")}</div>
       <button class="primary" id="saveS">회기 저장</button></div>
     <div class="card"><h2>상담 기록 <span class="muted">(상담자만 볼 수 있어요)</span></h2>
@@ -355,10 +411,16 @@ function renderSession(fid, w) {
       <div class="lbl">받는 사람</div><div class="row wrap">${(fam.members || []).map(m => `<label class="chk"><input type="checkbox" data-to="${m.id}" checked> ${esc(m.alias)}</label>`).join("")}</div>
       <button class="primary" id="giveHw">과제 보내기</button>
       ${d.homework.filter(h => h.week === w).map(h => `<a class="item" href="#fam/${fid}/h/${h.id}"><div>${esc(memberName(fam, h.forMember))} · ${esc(h.title)}</div><span class="st ${h.feedback ? "done" : h.submission ? "moved" : "planned"}">${h.feedback ? "피드백 완료" : h.submission ? "제출됨" : "미제출"}</span></a>`).join("")}</div>`, { back: `#fam/${fid}` });
-  $("#saveS").onclick = () => act(() => store.set(`families/${fid}/sessions/${w}`, {
-    topic: $("#topic").value.trim(), goal: $("#goal").value.trim(), status: $("#status").value, date: $("#date").value,
-    attendance: Array.from(document.querySelectorAll("[data-att]")).filter(x => x.checked).map(x => x.dataset.att),
-  }), "회기를 저장했어요");
+  $("#saveS").onclick = () => {
+    const nd = $("#date").value;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(nd)) return toast("날짜를 골라 주세요");
+    const delta = days(nd) - days(s.date), shift = $("#shiftAfter").checked && delta !== 0;
+    const ops = [[`families/${fid}/sessions/${w}`, { ...s, id: undefined, topic: $("#topic").value.trim(), goal: $("#goal").value.trim(), status: $("#status").value, date: nd, time: $("#time").value,
+      attendance: Array.from(document.querySelectorAll("[data-att]")).filter(x => x.checked).map(x => x.dataset.att) }]];
+    if (shift) d.sessions.filter(x => x.week > w && x.status === "planned").forEach(x => ops.push([`families/${fid}/sessions/${x.week}`, { ...x, id: undefined, date: addDays(x.date, delta) }]));
+    ops.forEach(o => delete o[1].id);
+    act(() => store.batch(ops), shift ? `회기와 이후 ${ops.length - 1}개 회기 날짜를 옮겼어요` : "회기를 저장했어요");
+  };
   $("#saveN").onclick = () => act(() => store.set(`families/${fid}/notes/${w}`, { week: w, s: $("#nS").value, o: $("#nO").value, a: $("#nA").value, p: $("#nP").value, risk: $("#risk").checked, updatedAt: new Date().toISOString() }), "상담 기록을 저장했어요");
   $("#giveHw").onclick = async () => {
     const to = Array.from(document.querySelectorAll("[data-to]")).filter(x => x.checked).map(x => x.dataset.to);
@@ -443,7 +505,7 @@ function renderClientHome() {
   const mine = EVAL_POINTS.map(p => d.evals.find(e => e.point === p.key)).filter(Boolean);
   const ph = phasesFor(fam);
   shell(`${prof.alias}님, 안녕하세요`, `
-    <div class="card hero"><p class="muted">다음 상담</p>${next ? `<h2>${fmt(next.date)} (${wd(next.date)}) · ${next.week}주차</h2><p><b>${esc(next.topic)}</b></p><p class="muted">${esc(next.goal)}</p>` : `<h2>${w < 1 ? "곧 시작해요" : "1년 과정을 마쳤어요"}</h2><p class="muted">시작일 ${fmt(fam.startDate)}</p>`}</div>
+    <div class="card hero"><p class="muted">다음 상담</p>${next ? `<h2>${fmt(next.date)} (${wd(next.date)})${next.time || fam.time ? " " + (next.time || fam.time) : ""} · ${next.week}주차</h2><p><b>${esc(next.topic)}</b></p><p class="muted">${esc(next.goal)}</p>` : `<h2>${w < 1 ? "곧 시작해요" : "1년 과정을 마쳤어요"}</h2><p class="muted">시작일 ${fmt(fam.startDate)}</p>`}</div>
     <div class="card"><h2>우리 가족의 1년 여정</h2>${journey(w, ph.map(p => p.short))}<p class="muted center">${w < 1 ? "곧 첫 회기를 시작해요" : w > 52 ? "1년 여정을 모두 마쳤어요" : `지금은 ${esc(phaseOf(w, fam).name)} · ${w}주차`}</p></div>
     <div class="card"><div class="dash">${ring(Math.max(0, Math.min(52, w)) / 52, w < 1 ? "0주" : Math.min(52, w) + "주", "52주 중")}${ring(all ? sub / all : 0, all ? Math.round((sub / all) * 100) + "%" : "-", `과제 ${sub}/${all}`, "#D98C4A")}</div></div>
     ${due.map(p => `<a class="alert blue" href="#selfeval/${p.key}">${p.name} 자체 평가를 작성해 주세요 ›</a>`).join("")}

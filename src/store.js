@@ -10,7 +10,8 @@ import {
 } from "firebase/firestore";
 
 // ---------- Firebase ----------
-export function firebaseStore(config, counselorEmail) {
+export function firebaseStore(config, counselorEmails) {
+  const COUNSELORS = counselorEmails.map(x => x.toLowerCase());
   const app = initializeApp(config);
   const auth = getAuth(app);
   let db;
@@ -24,7 +25,7 @@ export function firebaseStore(config, counselorEmail) {
       return onAuthStateChanged(auth, async u => {
         if (!u) return cb(null);
         const email = (u.email || "").toLowerCase();
-        if (email === counselorEmail.toLowerCase()) {
+        if (COUNSELORS.includes(email)) {
           // 메일 링크로 인증한 뒤에도 앱의 로그인 정보는 예전 상태일 수 있어, 새로 받아 옵니다.
           if (!u.emailVerified) { try { await u.reload(); if (auth.currentUser && auth.currentUser.emailVerified) await auth.currentUser.getIdToken(true); } catch (e) { /* 오프라인 */ } }
           return cb({ uid: u.uid, email, role: "counselor", verified: !!(auth.currentUser || u).emailVerified });

@@ -1,6 +1,6 @@
 rules_version = '2';
 // 마음엠디 Firestore 보안 규칙
-// - 상담자: 아래 이메일 계정(이메일 인증 완료)만 모든 자료를 읽고 쓸 수 있습니다.
+// - 상담자: 아래 이메일 계정들(이메일 인증 완료)만 모든 자료를 읽고 쓸 수 있습니다.
 // - 가족 구성원: 초대 코드로 가입한 뒤, 자기 가족의 회기 일정과 "자기" 과제 · 자체 평가만 볼 수 있습니다.
 // - 상담 기록(notes)과 PHQ-9 · GAD-7 결과는 상담자만 볼 수 있습니다.
 service cloud.firestore {
@@ -9,7 +9,7 @@ service cloud.firestore {
     function signedIn() { return request.auth != null; }
     function isCounselor() {
       return signedIn()
-        && request.auth.token.email == 'maumwelfare@gmail.com'
+        && request.auth.token.email in ['maumwelfare@gmail.com', 'kwondohyun@gmail.com', 'wyoonah@gmail.com']
         && request.auth.token.email_verified == true;
     }
     function profile() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }

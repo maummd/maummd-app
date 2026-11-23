@@ -8,4 +8,5 @@ export const FIREBASE_CONFIG = {
   appId: "1:675862535667:web:d0f3aaa3254b305c014686",
 };
 // 상담자 계정 이메일 (firestore.rules의 이메일과 같아야 합니다)
-export const COUNSELOR_EMAIL = "maumwelfare@gmail.com";
+// 상담자 계정 (이 목록을 바꾸면 firestore.rules 의 목록도 똑같이 바꿔 게시해야 합니다)
+export const COUNSELOR_EMAILS = ["maumwelfare@gmail.com", "kwondohyun@gmail.com", "wyoonah@gmail.com"];
