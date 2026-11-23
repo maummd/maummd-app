@@ -69,14 +69,19 @@ jobs:
           fi
           gradle bundleRelease assembleRelease --no-daemon
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: 테스트용-APK
-          path: android/app/build/outputs/apk/debug/*.apk
+      - name: 파일 이름 정리 (마음엠디)
+        run: |
+          mkdir -p out/test out/release
+          cp android/app/build/outputs/apk/debug/*.apk out/test/maummd-test.apk
+          cp android/app/build/outputs/bundle/release/*.aab out/release/maummd-release.aab
+          cp android/app/build/outputs/apk/release/*.apk out/release/maummd-release.apk
 
       - uses: actions/upload-artifact@v4
         with:
-          name: 출시용-AAB-APK
-          path: |
-            android/app/build/outputs/bundle/release/*.aab
-            android/app/build/outputs/apk/release/*.apk
+          name: 마음엠디-테스트용-APK
+          path: out/test/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: 마음엠디-출시용-AAB-APK
+          path: out/release/
