@@ -1,0 +1,81 @@
+rules_version = '2';
+// 마음엠디 Firestore 보안 규칙
+// - 상담자: 아래 이메일 계정(이메일 인증 완료)만 모든 자료를 읽고 쓸 수 있습니다.
+// - 가족 구성원: 초대 코드로 가입한 뒤, 자기 가족의 회기 일정과 "자기" 과제 · 자체 평가만 볼 수 있습니다.
+// - 상담 기록(notes)과 PHQ-9 · GAD-7 결과는 상담자만 볼 수 있습니다.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function isCounselor() {
+      return signedIn()
+        && request.auth.token.email == 'maumwelfare@gmail.com'
+        && request.auth.token.email_verified == true;
+    }
+    function profile() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
+    function hasProfile() { return signedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)); }
+    function inFamily(fid) { return hasProfile() && profile().familyId == fid; }
+    function invite(code) { return get(/databases/$(database)/documents/invites/$(code)).data; }
+
+    // 사용자 프로필: 초대 코드가 맞을 때만 본인이 한 번 만들 수 있습니다.
+    match /users/{uid} {
+      allow read: if isCounselor() || (signedIn() && request.auth.uid == uid);
+      allow create: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['role', 'familyId', 'memberId', 'alias', 'inviteCode', 'createdAt'])
+        && request.resource.data.role == 'client'
+        && exists(/databases/$(database)/documents/invites/$(request.resource.data.inviteCode))
+        && invite(request.resource.data.inviteCode).active == true
+        && invite(request.resource.data.inviteCode).familyId == request.resource.data.familyId
+        && invite(request.resource.data.inviteCode).memberId == request.resource.data.memberId
+        && request.resource.data.alias is string && request.resource.data.alias.size() <= 12;
+      allow update, delete: if isCounselor();
+    }
+
+    // 초대 코드: 코드를 아는 사람만 한 건씩 확인할 수 있습니다.
+    match /invites/{code} {
+      allow get: if signedIn();
+      allow list, write: if isCounselor();
+    }
+
+    match /families/{fid} {
+      allow read: if isCounselor() || inFamily(fid);
+      allow write: if isCounselor();
+
+      // 회기 일정: 가족 모두 볼 수 있고, 상담자만 바꿉니다.
+      match /sessions/{week} {
+        allow read: if isCounselor() || inFamily(fid);
+        allow write: if isCounselor();
+      }
+
+      // 상담 기록(SOAP): 상담자만.
+      match /notes/{week} {
+        allow read, write: if isCounselor();
+      }
+
+      // 과제: 받은 사람만 보고, 피드백 전까지 '제출 내용'만 고칠 수 있습니다.
+      match /homework/{hid} {
+        allow read: if isCounselor()
+          || (inFamily(fid) && resource.data.forMember == profile().memberId);
+        allow create, delete: if isCounselor();
+        allow update: if isCounselor()
+          || (inFamily(fid)
+              && resource.data.forMember == profile().memberId
+              && resource.data.feedback == ''
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['submission'])
+              && request.resource.data.submission.by == request.auth.uid);
+      }
+
+      // 평가: PHQ-9 · GAD-7은 상담자만, 가족기능 자체 평가(FAM)는 본인이 한 번 제출하고 본인 것만 봅니다.
+      match /evals/{eid} {
+        allow read: if isCounselor()
+          || (inFamily(fid) && resource.data.kind == 'FAM' && resource.data.memberId == profile().memberId);
+        allow create: if isCounselor()
+          || (inFamily(fid)
+              && request.resource.data.kind == 'FAM'
+              && request.resource.data.memberId == profile().memberId
+              && request.resource.data.by == request.auth.uid);
+        allow update, delete: if isCounselor();
+      }
+    }
+  }
+}
