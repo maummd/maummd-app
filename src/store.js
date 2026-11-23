@@ -6,7 +6,7 @@ import {
 } from "firebase/auth";
 import {
   initializeFirestore, persistentLocalCache, doc, getDoc, setDoc, deleteDoc, collection,
-  query, where, onSnapshot,
+  query, where, onSnapshot, writeBatch,
 } from "firebase/firestore";
 
 // ---------- Firebase ----------
@@ -24,7 +24,11 @@ export function firebaseStore(config, counselorEmail) {
       return onAuthStateChanged(auth, async u => {
         if (!u) return cb(null);
         const email = (u.email || "").toLowerCase();
-        if (email === counselorEmail.toLowerCase()) return cb({ uid: u.uid, email, role: "counselor", verified: u.emailVerified });
+        if (email === counselorEmail.toLowerCase()) {
+          // 메일 링크로 인증한 뒤에도 앱의 로그인 정보는 예전 상태일 수 있어, 새로 받아 옵니다.
+          if (!u.emailVerified) { try { await u.reload(); if (auth.currentUser && auth.currentUser.emailVerified) await auth.currentUser.getIdToken(true); } catch (e) { /* 오프라인 */ } }
+          return cb({ uid: u.uid, email, role: "counselor", verified: !!(auth.currentUser || u).emailVerified });
+        }
         const snap = await getDoc(toRef("users/" + u.uid)).catch(() => null);
         const prof = snap && snap.exists() ? snap.data() : null;
         cb({ uid: u.uid, email, role: prof ? "client" : "new", profile: prof, verified: u.emailVerified });
@@ -34,6 +38,20 @@ export function firebaseStore(config, counselorEmail) {
     signUp: (e, p) => createUserWithEmailAndPassword(auth, e, p),
     signOut: () => signOut(auth),
     verify: () => auth.currentUser && sendEmailVerification(auth.currentUser),
+    // 인증 상태와 권한 정보를 서버에서 다시 받아 옵니다. 인증되어 있으면 true.
+    async refresh() {
+      const u = auth.currentUser; if (!u) return false;
+      await u.reload(); await auth.currentUser.getIdToken(true);
+      return !!auth.currentUser.emailVerified;
+    },
+    // 여러 문서를 한 번에 저장합니다 (최대 450건씩).
+    async batch(ops) {
+      for (let i = 0; i < ops.length; i += 450) {
+        const b = writeBatch(db);
+        ops.slice(i, i + 450).forEach(([path, data]) => b.set(toRef(path), data));
+        await b.commit();
+      }
+    },
     reset: e => sendPasswordResetEmail(auth, e),
     async get(path) { const s = await getDoc(toRef(path)); return s.exists() ? s.data() : null; },
     set: (path, data) => setDoc(toRef(path), data, { merge: true }),
@@ -81,7 +99,8 @@ export function localStore() {
     mode: "demo",
     onAuth(cb) { authCb = cb; setTimeout(() => cb(userFor(role)), 0); return () => { authCb = null; }; },
     switchRole(r) { role = r; try { localStorage.setItem(KEY + "-role", r); } catch (e) { /* */ } if (authCb) authCb(userFor(r)); },
-    signIn: async () => {}, signUp: async () => {}, signOut: async () => {}, verify: async () => {}, reset: async () => {},
+    signIn: async () => {}, signUp: async () => {}, signOut: async () => {}, verify: async () => {}, reset: async () => {}, refresh: async () => true,
+    async batch(ops) { ops.forEach(([path, d]) => { data[path] = JSON.parse(JSON.stringify(d)); }); persist(); notify(); },
     async get(path) { return data[path] ? { ...data[path] } : null; },
     async set(path, d) { data[path] = Object.assign({}, data[path] || {}, JSON.parse(JSON.stringify(d))); persist(); notify(); },
     async put(path, d) { data[path] = JSON.parse(JSON.stringify(d)); persist(); notify(); },

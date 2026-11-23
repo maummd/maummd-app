@@ -1,4 +1,7 @@
-import { CURRICULUM, PHASES, EVAL_POINTS, PHQ9_BANDS, GAD7_BANDS, FAM_ITEMS, HW_TYPES } from "./curriculum.js";
+import { EVAL_POINTS, PHQ9_BANDS, GAD7_BANDS, FAM_ITEMS, HW_TYPES } from "./curriculum.js";
+import { PROGRAMS, programOf, ROLES, FOCUSES, randomAlias } from "./programs.js";
+import { ring, phaseStrip, hbars, lineChart, radar, monthCols, donut, PHASE_COLORS, SERIES } from "./charts.js";
+import { phaseIcon, gardenHero, journey, programIcon, emptyArt } from "./art.js";
 import { firebaseStore, localStore } from "./store.js";
 import { FIREBASE_CONFIG, COUNSELOR_EMAIL } from "./config.js";
 
@@ -15,8 +18,11 @@ const fmt = iso => { if (!iso) return ""; const [y, m, d] = iso.split("-"); retu
 const fmtShort = iso => { if (!iso) return ""; const [, m, d] = iso.split("-"); return `${Number(m)}/${Number(d)}`; };
 const sessionDate = (fam, w) => addDays(fam.startDate, 7 * (w - 1));
 const weekOf = (fam, iso = todayIso()) => Math.floor((days(iso) - days(fam.startDate)) / 7) + 1;
-const nextSunday = () => { const t = todayIso(); return addDays(t, (7 - weekday(t)) % 7); };
-const phaseOf = w => PHASES.find(p => w >= p.weeks[0] && w <= p.weeks[1]) || PHASES[3];
+const WD = "일월화수목금토";
+const wd = iso => iso ? WD[weekday(iso)] : "";
+const phasesFor = fam => ((fam && fam.phases) || programOf(fam && fam.program).phases).map((nm, i) => ({ n: i + 1, name: `${i + 1}단계 · ${nm}`, short: nm, weeks: [i * 13 + 1, i * 13 + 13], color: PHASE_COLORS[i] }));
+const phaseOf = (w, fam) => phasesFor(fam)[Math.max(0, Math.min(3, Math.floor((w - 1) / 13)))];
+const FAM_SHORT = ["감정 표현", "대화로 해결", "서로 존중", "함께 즐거움", "도움 요청", "의견 존중", "규칙 · 역할", "생각 바꾸기", "배운 것 실천", "희망"];
 const band = (bands, total) => (bands.find(([a, b]) => total >= a && total <= b) || [0, 0, ""])[2];
 const rid = (n = 8) => { const a = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789", r = new Uint32Array(n); crypto.getRandomValues(r); return Array.from(r, x => a[x % a.length]).join(""); };
 const memberName = (fam, id) => ((fam.members || []).find(m => m.id === id) || {}).alias || "구성원";
@@ -25,7 +31,24 @@ let toastT;
 function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), 2400); }
 async function act(fn, ok) {
   try { await fn(); if (ok) toast(ok); return true; }
-  catch (e) { console.error(e); toast(e && e.code === "permission-denied" ? "권한이 없어요 (로그인 상태를 확인해 주세요)" : (e && e.message) || "저장하지 못했어요"); return false; }
+  catch (e) {
+    console.error(e);
+    if (e && e.code === "permission-denied" && S.user && S.user.role === "counselor") {
+      // 이메일 인증 직후라면 권한 정보를 새로 받아 한 번 더 시도합니다.
+      let verified = false;
+      try { verified = await store.refresh(); } catch (x) { /* */ }
+      if (verified) {
+        S.user.verified = true;
+        try { await fn(); if (ok) toast(ok); return true; } catch (e2) { console.error(e2); }
+        toast("권한이 없어요. Firebase 콘솔 → Firestore → 규칙에 보안 규칙을 붙여 넣고 [게시]를 눌렀는지 확인해 주세요");
+      } else {
+        toast("상담자 이메일 인증이 아직 확인되지 않았어요. 홈의 [인증 메일 보내기] → 메일 링크 → [인증 완료 확인]을 눌러 주세요");
+      }
+      return false;
+    }
+    toast(e && e.code === "permission-denied" ? "권한이 없어요. 로그인 상태를 확인해 주세요" : (e && e.message) || "저장하지 못했어요");
+    return false;
+  }
 }
 
 // ---------- 상태 ----------
@@ -71,8 +94,8 @@ function shell(title, body, opts = {}) {
 
 // ---------- 로그인 · 가입 ----------
 function renderAuth() {
-  shell("로그인", `<div class="card">
-    <p class="muted">상담자와 가족 구성원 모두 이메일로 로그인해요.</p>
+  shell("로그인", `<div class="heroart">${gardenHero(140)}</div><div class="card">
+    <p><b>가족이 함께 자라는 1년의 정원</b></p><p class="muted">상담자와 가족 구성원 모두 이메일로 로그인해요.</p>
     <label>이메일<input id="em" type="email" autocomplete="username"></label>
     <label>비밀번호<input id="pw" type="password" autocomplete="current-password" minlength="8"></label>
     <div class="row"><button class="primary" id="login">로그인</button><button id="signup">처음이에요 (가입)</button></div>
@@ -118,76 +141,101 @@ function alertsFor(fid) {
   return out;
 }
 function renderCounselorHome() {
-  const sun = nextSunday();
+  const t = todayIso(), end = addDays(t, 6);
   const fams = S.families.filter(f => f.status !== "closed");
   fams.forEach(f => watchFamily(f.id));
-  const rows = fams.map(f => {
-    const d = famData(f.id), fam = d.info || f, w = Math.floor((days(sun) - days(fam.startDate)) / 7) + 1;
-    const s = d.sessions.find(x => x.week === w);
-    return { f, fam, w, s };
-  }).filter(x => x.w >= 1 && x.w <= 52);
+  const rows = fams.flatMap(f => {
+    const d = famData(f.id), fam = d.info || f;
+    return d.sessions.filter(s => s.date >= t && s.date <= end).map(s => ({ f, fam, w: s.week, s }));
+  }).sort((a, b) => a.s.date.localeCompare(b.s.date));
   const alerts = fams.flatMap(f => alertsFor(f.id).map(a => ({ ...a, fam: (famData(f.id).info || f).alias })));
-  const verify = store.mode === "firebase" && !S.user.verified ? `<div class="card warn">상담자 이메일 인증이 필요해요. 인증 전에는 기록을 저장할 수 없어요. <button id="vf">인증 메일 보내기</button></div>` : "";
-  shell("상담자 홈", `${verify}
-    <div class="card"><div class="spread"><h2>이번 일요일 ${fmt(sun)}</h2><span class="pill">${rows.length}가족</span></div>
-      ${rows.length ? rows.map(({ f, fam, w, s }) => `<a class="item" href="#fam/${f.id}/s/${w}"><span class="dot" style="background:${phaseOf(w).color}"></span><div><b>${esc(fam.alias)}</b> · ${w}주차<div class="muted">${esc(s ? s.topic : "")}</div></div><span class="go">›</span></a>`).join("") : '<p class="muted">이번 일요일에 예정된 회기가 없어요.</p>'}
+  const waiting = fams.reduce((n, f) => n + famData(f.id).homework.filter(h => h.submission && !h.feedback).length, 0);
+  const byPhase = [0, 0, 0, 0], before = { n: 0 };
+  fams.forEach(f => { const fam = famData(f.id).info || f, w = weekOf(fam); if (w < 1) before.n++; else if (w <= 52) byPhase[Math.floor((w - 1) / 13)]++; });
+  const verify = store.mode === "firebase" && !S.user.verified ? `<div class="card warn"><b>상담자 이메일 인증이 필요해요.</b><p class="muted">인증 전에는 가족 등록 · 기록 저장이 막혀요. ① 인증 메일 보내기 → ② 메일의 링크 누르기 → ③ 인증 완료 확인</p><div class="row wrap"><button id="vf">① 인증 메일 보내기</button><button class="primary" id="vchk" style="margin-top:0">③ 인증 완료 확인</button></div></div>` : "";
+  shell("상담자 홈", `<div class="heroart">${gardenHero()}</div>${verify}
+    <div class="stats"><div><b>${fams.length}</b><span>진행 중 가족</span></div><div><b>${rows.length}</b><span>이번 주 회기</span></div><div><b>${waiting}</b><span>피드백 대기</span></div><div class="${alerts.some(a => a.lv === "red") ? "hot" : ""}"><b>${alerts.length}</b><span>확인할 일</span></div></div>
+    <div class="card"><div class="spread"><h2>이번 주 회기</h2><span class="muted">${fmtShort(t)} ~ ${fmtShort(end)}</span></div>
+      ${rows.length ? rows.map(({ f, fam, w, s }) => `<a class="item" href="#fam/${f.id}/s/${w}"><span class="wk" style="background:${phaseOf(w, fam).color};color:#fff">${w}</span><div><b>${esc(fam.alias)}</b> · ${fmtShort(s.date)} (${wd(s.date)})<div class="muted">${esc(s.topic)}</div></div><span class="go">›</span></a>`).join("") : emptyArt("이번 주에 예정된 회기가 없어요.")}
     </div>
     <div class="card"><h2>확인할 일</h2>
       ${alerts.length ? alerts.map(a => `<a class="alert ${a.lv}" href="${a.href}"><b>${esc(a.fam)}</b> ${esc(a.t)}</a>`).join("") : '<p class="muted">지금 확인할 일이 없어요.</p>'}
     </div>
+    ${fams.length ? `<div class="card"><h2>단계별 가족 분포</h2>${donut([...byPhase.map((v, i) => ({ name: `${i + 1}단계`, value: v, color: PHASE_COLORS[i] })), { name: "시작 전", value: before.n, color: "#C9C2B6" }], fams.length + "가족")}</div>` : ""}
     <a class="btn primary block" href="#newfam">+ 새 가족 등록</a>`);
-  const vf = $("#vf"); if (vf) vf.onclick = () => act(() => store.verify(), "인증 메일을 보냈어요. 메일의 링크를 누른 뒤 다시 로그인해 주세요");
+  const vf = $("#vf"); if (vf) vf.onclick = () => act(() => store.verify(), "인증 메일을 보냈어요. 메일의 링크를 누른 뒤 [인증 완료 확인]을 눌러 주세요");
+  const vc = $("#vchk"); if (vc) vc.onclick = async () => {
+    let ok = false; try { ok = await store.refresh(); } catch (e) { /* */ }
+    if (ok) { S.user.verified = true; toast("인증이 확인됐어요"); render(); } else toast("아직 인증 전이에요. 메일함(스팸함 포함)의 링크를 먼저 눌러 주세요");
+  };
 }
 function renderFamilies() {
   S.families.forEach(f => watchFamily(f.id));
   const list = S.families.slice().sort((a, b) => (a.status === "closed") - (b.status === "closed") || String(b.startDate).localeCompare(String(a.startDate)));
   shell("가족 목록", `<div class="card">${list.length ? list.map(f => {
-    const fam = famData(f.id).info || f, w = weekOf(fam);
-    return `<a class="item" href="#fam/${f.id}"><span class="dot" style="background:${w >= 1 && w <= 52 ? phaseOf(w).color : "#bbb"}"></span><div><b>${esc(fam.alias)}</b>${fam.status === "closed" ? ' <span class="pill">종결</span>' : ""}<div class="muted">시작 ${fmt(fam.startDate)} · ${w < 1 ? "시작 전" : w > 52 ? "1년 과정 종료" : w + "주차"} · ${(fam.members || []).length}명</div></div><span class="go">›</span></a>`;
-  }).join("") : '<p class="muted">등록된 가족이 없어요.</p>'}</div><a class="btn primary block" href="#newfam">+ 새 가족 등록</a>`);
+    const fam = famData(f.id).info || f, w = weekOf(fam), pct = Math.max(0, Math.min(52, w)) / 52;
+    return `<a class="item" href="#fam/${f.id}">${programIcon(fam.program || "std", 40)}<div><b>${esc(fam.alias)}</b>${fam.status === "closed" ? ' <span class="pill">종결</span>' : ""}<div class="muted">${esc(programOf(fam.program).name)} · ${(fam.members || []).length}명 · ${w < 1 ? "시작 전" : w > 52 ? "1년 과정 종료" : w + "주차"}</div><span class="mini"><i style="width:${Math.round(pct * 100)}%;background:${w >= 1 && w <= 52 ? phaseOf(w, fam).color : "#bbb"}"></i></span></div><span class="go">›</span></a>`;
+  }).join("") : emptyArt("등록된 가족이 없어요. 첫 가족을 등록해 보세요.")}</div><a class="btn primary block" href="#newfam">+ 새 가족 등록</a>`);
 }
 
 // ---------- 상담자: 새 가족 ----------
 function renderNewFamily() {
-  const sun = nextSunday();
-  shell("새 가족 등록", `<div class="card">
-    <label>가족 별칭 (실명 대신)<input id="alias" maxlength="20" placeholder="예: 정○○ 가족, A가족"></label>
-    <label>첫 회기 날짜 (일요일)<input id="start" type="date" value="${sun}"></label>
-    <h3>구성원 (최대 6명)</h3><p class="muted">별칭과 이번 상담의 초점을 적어 주세요.</p>
-    <div id="mems"></div><button id="addm">+ 구성원 추가</button></div>
+  const st = { prog: "std", start: addDays(todayIso(), 7), alias: randomAlias("family"), mems: [] };
+  const used = () => st.mems.map(m => m.alias);
+  const newMem = (role = "보호자") => ({ alias: randomAlias("member", used()), role, focus: "의사소통" });
+  st.mems.push(newMem("보호자")); st.mems.push(newMem("자녀"));
+  shell("새 가족 등록", `
+    <div class="card"><h2>1. 52주 프로그램 고르기</h2><p class="muted">예시안이에요. 등록 뒤 회기마다 주제 · 목표 · 과제를 고칠 수 있어요.</p>
+      <div class="progs">${PROGRAMS.map(p => `<label class="prog"><input type="radio" name="prog" value="${p.key}"${p.key === st.prog ? " checked" : ""}><span>${programIcon(p.key)}<span><b>${esc(p.name)}</b><em>${esc(p.who)}</em><small>${esc(p.desc)}</small></span></span></label>`).join("")}</div>
+      <div id="preview"></div></div>
+    <div class="card"><h2>2. 가족 정보</h2>
+      <div class="note">🔒 실명 · 애칭 · 학교 · 지역 · 직장 이름은 쓰지 마세요. 🎲를 누르면 정원 이름으로 된 익명 별칭이 만들어져요.</div>
+      <label>가족 별칭</label><div class="row"><input id="alias" maxlength="20" value="${esc(st.alias)}"><button class="dice" id="dfam" aria-label="새 별칭">🎲</button></div>
+      <label>첫 회기 날짜 <span id="wdl" class="pill"></span><input id="start" type="date" value="${st.start}"></label>
+      <p class="muted">요일 제한은 없어요. 첫 회기와 같은 요일로 매주 52회기가 잡히고, 회기마다 날짜를 바꿀 수 있어요.</p></div>
+    <div class="card"><h2>3. 구성원 (최대 8명)</h2><p class="muted">별칭 · 역할 · 상담 초점을 골라 주세요. 각자 받는 초대 코드로 앱에 들어와요.</p>
+      <div id="mems"></div><div class="row wrap"><button id="addm">+ 구성원 추가</button><button id="dall">🎲 별칭 모두 새로</button></div></div>
     <button class="primary block" id="save">등록하고 52주 회기표 만들기</button>`, { back: "#families" });
-  const mems = [{ alias: "", focus: "인지 개선" }, { alias: "", focus: "인지 개선" }];
-  const draw = () => {
-    $("#mems").innerHTML = mems.map((m, i) => `<div class="row mem"><input data-i="${i}" data-f="alias" maxlength="12" placeholder="별칭 (예: 정○연)" value="${esc(m.alias)}"><select data-i="${i}" data-f="focus">${["인지 개선", "행동 개선", "정서 조절", "의사소통", "기타"].map(o => `<option${o === m.focus ? " selected" : ""}>${o}</option>`).join("")}</select><button data-del="${i}" aria-label="삭제">✕</button></div>`).join("");
-    document.querySelectorAll("#mems [data-f]").forEach(el => el.oninput = el.onchange = () => { mems[el.dataset.i][el.dataset.f] = el.value; });
-    document.querySelectorAll("#mems [data-del]").forEach(b => b.onclick = () => { mems.splice(Number(b.dataset.del), 1); draw(); });
-    $("#addm").disabled = mems.length >= 6;
+  const preview = () => {
+    const p = programOf(st.prog);
+    $("#preview").innerHTML = `<div class="pv">${p.phases.map((nm, i) => `<div class="pvp"><div class="spread"><span class="row">${phaseIcon(i + 1, 34)}<b style="color:${PHASE_COLORS[i]}">${i + 1}단계 · ${esc(nm)}</b></span><span class="muted">${i * 13 + 1}~${i * 13 + 13}주</span></div><ol start="${i * 13 + 1}">${p.weeks.slice(i * 13, i * 13 + 13).map(r => `<li>${esc(r[0])}</li>`).join("")}</ol></div>`).join("")}</div>
+      <div class="lbl">과제 유형 구성</div>${hbars(Object.entries(HW_TYPES).map(([k, v], i) => { const n = p.weeks.filter(r => r[3] === k).length; return { label: v.name, value: n / 52, text: n + "회", color: SERIES[i] }; }))}`;
   };
-  draw();
-  $("#addm").onclick = () => { if (mems.length < 6) { mems.push({ alias: "", focus: "인지 개선" }); draw(); } };
+  const showWd = () => { const v = $("#start").value; $("#wdl").textContent = /^\d{4}-\d{2}-\d{2}$/.test(v) ? `매주 ${wd(v)}요일` : ""; };
+  const draw = () => {
+    $("#mems").innerHTML = st.mems.map((m, i) => `<div class="mem2"><div class="row"><span class="avatar" style="background:${SERIES[i % SERIES.length]}">${esc(m.alias.slice(0, 1))}</span><input data-i="${i}" data-f="alias" maxlength="12" value="${esc(m.alias)}" placeholder="별칭"><button class="dice" data-dice="${i}" aria-label="새 별칭">🎲</button><button data-del="${i}" aria-label="삭제">✕</button></div>
+      <div class="row"><select data-i="${i}" data-f="role">${ROLES.map(o => `<option${o === m.role ? " selected" : ""}>${o}</option>`).join("")}</select><select data-i="${i}" data-f="focus">${FOCUSES.map(o => `<option${o === m.focus ? " selected" : ""}>${o}</option>`).join("")}</select></div></div>`).join("");
+    document.querySelectorAll("#mems [data-f]").forEach(el => el.oninput = el.onchange = () => { st.mems[el.dataset.i][el.dataset.f] = el.value; });
+    document.querySelectorAll("#mems [data-del]").forEach(b => b.onclick = () => { st.mems.splice(Number(b.dataset.del), 1); draw(); });
+    document.querySelectorAll("#mems [data-dice]").forEach(b => b.onclick = () => { const i = Number(b.dataset.dice); st.mems[i].alias = randomAlias("member", used()); draw(); });
+    $("#addm").disabled = st.mems.length >= 8;
+  };
+  preview(); showWd(); draw();
+  document.querySelectorAll('input[name="prog"]').forEach(r => r.onchange = () => { st.prog = r.value; preview(); });
+  $("#start").onchange = $("#start").oninput = showWd;
+  $("#dfam").onclick = () => { $("#alias").value = randomAlias("family"); };
+  $("#dall").onclick = () => { st.mems.forEach(m => { m.alias = ""; }); st.mems.forEach(m => { m.alias = randomAlias("member", used()); }); draw(); };
+  $("#addm").onclick = () => { if (st.mems.length < 8) { st.mems.push(newMem("자녀")); draw(); } };
   $("#save").onclick = async () => {
-    const alias = $("#alias").value.trim(), start = $("#start").value;
-    const members = mems.filter(m => m.alias.trim()).map((m, i) => ({ id: "m" + (i + 1) + rid(3).toLowerCase(), alias: m.alias.trim(), focus: m.focus }));
+    const alias = $("#alias").value.trim(), start = $("#start").value, prog = programOf(st.prog);
+    const members = st.mems.filter(m => m.alias.trim()).map((m, i) => ({ id: "m" + (i + 1) + rid(3).toLowerCase(), alias: m.alias.trim(), role: m.role, focus: m.focus }));
     if (!alias) return toast("가족 별칭을 입력해 주세요");
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || weekday(start) !== 0) return toast("첫 회기는 일요일 날짜로 골라 주세요");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(start)) return toast("첫 회기 날짜를 골라 주세요");
     if (!members.length) return toast("구성원을 한 명 이상 입력해 주세요");
-    const fid = "f" + Date.now().toString(36) + rid(4).toLowerCase();
+    if (new Set(members.map(m => m.alias)).size !== members.length) return toast("구성원 별칭이 겹쳐요. 🎲로 바꿔 주세요");
+    const fid = "f" + Date.now().toString(36) + rid(4).toLowerCase(), now = new Date().toISOString();
+    const ops = [["families/" + fid, { alias, code: "MD-" + rid(5), program: prog.key, programName: prog.name, phases: prog.phases, startDate: start, members, status: "active", createdAt: now }]];
+    prog.weeks.forEach(([topic, goal, hwTitle, hwType], i) => ops.push([`families/${fid}/sessions/${i + 1}`, { week: i + 1, date: addDays(start, 7 * i), topic, goal, hwTitle, hwType, status: "planned", attendance: [] }]));
+    members.forEach(m => ops.push(["invites/" + rid(), { familyId: fid, memberId: m.id, active: true, createdAt: now }]));
     $("#save").disabled = true; $("#save").textContent = "회기표 만드는 중…";
-    const ok = await act(async () => {
-      await store.put("families/" + fid, { alias, startDate: start, members, status: "active", createdAt: new Date().toISOString() });
-      for (let w = 1; w <= 52; w++) {
-        const [topic, goal, hwTitle, hwType] = CURRICULUM[w - 1];
-        await store.put(`families/${fid}/sessions/${w}`, { week: w, date: sessionDate({ startDate: start }, w), topic, goal, hwTitle, hwType, status: "planned", attendance: [] });
-      }
-      for (const m of members) await store.put("invites/" + rid(), { familyId: fid, memberId: m.id, active: true, createdAt: new Date().toISOString() });
-    }, "가족을 등록했어요");
-    if (ok) location.hash = `#fam/${fid}`; else { $("#save").disabled = false; $("#save").textContent = "등록하고 52주 회기표 만들기"; }
+    const ok = await act(() => store.batch(ops), "가족을 등록했어요");
+    if (ok) location.hash = `#fam/${fid}/info`; else { $("#save").disabled = false; $("#save").textContent = "등록하고 52주 회기표 만들기"; }
   };
 }
 
 // ---------- 상담자: 가족 상세 ----------
 function famTabs(fid, tab) {
-  return `<div class="tabs">${[["", "회기"], ["hw", "과제"], ["eval", "평가"], ["info", "정보"]].map(([k, n]) => `<a href="#fam/${fid}${k ? "/" + k : ""}" class="${tab === k ? "on" : ""}">${n}</a>`).join("")}</div>`;
+  return `<div class="tabs">${[["", "회기"], ["dash", "현황"], ["hw", "과제"], ["eval", "평가"], ["info", "정보"]].map(([k, n]) => `<a href="#fam/${fid}${k ? "/" + k : ""}" class="${tab === k ? "on" : ""}">${n}</a>`).join("")}</div>`;
 }
 function renderFamily(fid, tab) {
   watchFamily(fid);
@@ -196,17 +244,49 @@ function renderFamily(fid, tab) {
   const w = weekOf(fam);
   let body = "";
   if (tab === "") {
-    body = PHASES.map(p => `<div class="card"><h3 style="color:${p.color}">${p.name}</h3>${d.sessions.filter(s => s.week >= p.weeks[0] && s.week <= p.weeks[1]).map(s => `<a class="item ${s.week === w ? "now" : ""}" href="#fam/${fid}/s/${s.week}"><span class="wk">${s.week}</span><div><b>${esc(s.topic)}</b><div class="muted">${fmtShort(s.date)} (일)${d.notes[String(s.week)] ? " · 기록 있음" : ""}</div></div><span class="st ${s.status}">${({ planned: "예정", done: "완료", absent: "불참", moved: "변경" })[s.status] || ""}</span></a>`).join("")}</div>`).join("");
+    body = `<div class="card">${phaseStrip(w, fam.phases)}</div>` + phasesFor(fam).map(p => `<div class="card"><div class="row">${phaseIcon(p.n, 38)}<h3 style="color:${p.color};margin:0">${esc(p.name)}</h3></div>${d.sessions.filter(s => s.week >= p.weeks[0] && s.week <= p.weeks[1]).map(s => `<a class="item ${s.week === w ? "now" : ""}" href="#fam/${fid}/s/${s.week}"><span class="wk">${s.week}</span><div><b>${esc(s.topic)}</b><div class="muted">${fmtShort(s.date)} (${wd(s.date)})${d.notes[String(s.week)] ? " · 기록 있음" : ""}</div></div><span class="st ${s.status}">${({ planned: "예정", done: "완료", absent: "불참", moved: "변경" })[s.status] || ""}</span></a>`).join("")}</div>`).join("");
+  } else if (tab === "dash") {
+    body = familyDash(fam, d);
   } else if (tab === "hw") {
     const hw = d.homework.slice().sort((a, b) => b.week - a.week || String(b.assignedAt).localeCompare(String(a.assignedAt)));
-    body = `<div class="card"><h2>과제 ${hw.length}건</h2>${hw.length ? hw.map(h => `<a class="item" href="#fam/${fid}/h/${h.id}"><span class="wk">${h.week}</span><div><b>${esc(h.title)}</b><div class="muted">${esc(memberName(fam, h.forMember))} · ${HW_TYPES[h.type] ? HW_TYPES[h.type].name : ""}</div></div><span class="st ${h.feedback ? "done" : h.submission ? "moved" : "planned"}">${h.feedback ? "피드백 완료" : h.submission ? "제출됨" : "미제출"}</span></a>`).join("") : '<p class="muted">회기 화면에서 과제를 낼 수 있어요.</p>'}</div>`;
+    body = `<div class="card"><h2>과제 ${hw.length}건</h2>${hw.length ? hw.map(h => `<a class="item" href="#fam/${fid}/h/${h.id}"><span class="wk">${h.week}</span><div><b>${esc(h.title)}</b><div class="muted">${esc(memberName(fam, h.forMember))} · ${HW_TYPES[h.type] ? HW_TYPES[h.type].name : ""}</div></div><span class="st ${h.feedback ? "done" : h.submission ? "moved" : "planned"}">${h.feedback ? "피드백 완료" : h.submission ? "제출됨" : "미제출"}</span></a>`).join("") : emptyArt("회기 화면에서 과제를 낼 수 있어요.")}</div>`;
   } else if (tab === "eval") {
-    body = evalSummary(fam, d) + `<div class="card"><h2>평가 입력</h2><p class="muted">PHQ-9 · GAD-7은 종이 검사지로 실시한 뒤 문항별 점수를 입력하세요.</p>${EVAL_POINTS.map(p => `<h3>${p.name} <span class="muted">(${p.week}주차 · ${fmtShort(sessionDate(fam, p.week))})</span></h3><div class="row wrap">${(fam.members || []).map(m => `<a class="btn small" href="#fam/${fid}/e/${p.key}/${m.id}">${esc(m.alias)}</a>`).join("")}</div>`).join("")}</div>`;
+    body = evalCharts(fam, d) + evalSummary(fam, d) + `<div class="card"><h2>평가 입력</h2><p class="muted">PHQ-9 · GAD-7은 종이 검사지로 실시한 뒤 문항별 점수를 입력하세요.</p>${EVAL_POINTS.map(p => `<h3>${p.name} <span class="muted">(${p.week}주차 · ${fmtShort(sessionDate(fam, p.week))})</span></h3><div class="row wrap">${(fam.members || []).map(m => `<a class="btn small" href="#fam/${fid}/e/${p.key}/${m.id}">${esc(m.alias)}</a>`).join("")}</div>`).join("")}</div>`;
   } else if (tab === "info") {
     body = familyInfo(fid, fam, d);
   }
-  shell(fam.alias, famTabs(fid, tab) + `<p class="muted center">시작 ${fmt(fam.startDate)} · ${w < 1 ? "시작 전" : w > 52 ? "1년 과정 종료" : `지금 ${w}주차`}</p>` + body, { back: "#families" });
+  shell(fam.alias, famTabs(fid, tab) + `<p class="muted center">${esc(programOf(fam.program).name)} · 매주 ${wd(fam.startDate)}요일 · ${w < 1 ? "시작 전" : w > 52 ? "1년 과정 종료" : `지금 ${w}주차`}</p>` + body, { back: "#families" });
   if (tab === "info") bindFamilyInfo(fid, fam, d);
+}
+
+// 현황 대시보드
+function familyDash(fam, d) {
+  const w = weekOf(fam), done = d.sessions.filter(s => s.status === "done").length, absent = d.sessions.filter(s => s.status === "absent").length;
+  const past = d.sessions.filter(s => s.date <= todayIso()).length;
+  const mems = fam.members || [];
+  const months = {};
+  d.sessions.forEach(s => { if (s.status === "done" || s.status === "absent") { const k = s.date.slice(0, 7); (months[k] = months[k] || { label: Number(k.slice(5)) + "월", done: 0, absent: 0 })[s.status]++; } });
+  const doneS = d.sessions.filter(s => s.status === "done");
+  const att = mems.map((m, i) => { const n = doneS.filter(s => (s.attendance || []).includes(m.id)).length; return { label: m.alias, value: doneS.length ? n / doneS.length : 0, text: doneS.length ? `${n}/${doneS.length}` : "-", color: SERIES[i % SERIES.length] }; });
+  const hw = mems.map((m, i) => { const all = d.homework.filter(h => h.forMember === m.id), sub = all.filter(h => h.submission).length; return { label: m.alias, value: all.length ? sub / all.length : 0, text: all.length ? `${sub}/${all.length}` : "-", color: SERIES[i % SERIES.length] }; });
+  const c = completion(fam, d);
+  return `<div class="card"><div class="dash">${ring(Math.max(0, Math.min(52, w)) / 52, w < 1 ? "시작 전" : w > 52 ? "완료" : w + "주차", "52주 중")}${ring(Math.min(1, done / 16), done + "회", "완료 회기", "#D98C4A")}${ring(past ? done / past : 0, past ? Math.round((done / past) * 100) + "%" : "-", "진행률", "#4F7CAC")}</div>${phaseStrip(w, fam.phases)}</div>
+    <div class="card"><h2>월별 회기</h2>${monthCols(Object.keys(months).sort().map(k => months[k]))}<p class="muted">완료 ${done}회 · 불참 ${absent}회</p></div>
+    <div class="card"><h2>구성원별 출석률</h2><p class="muted">완료한 회기 중 출석 체크한 비율</p>${hbars(att)}</div>
+    <div class="card"><h2>구성원별 과제 제출률</h2>${hbars(hw)}</div>
+    <div class="card"><h2>수료 조건</h2>${hbars([{ label: "회기", value: Math.min(1, c.done / 16), text: `${c.done}/16`, color: "#D98C4A" }, ...c.per.map((p, i) => ({ label: p.mem.alias, value: p.total ? p.met / p.total : 0, text: `${p.met}/${p.total}개월`, color: SERIES[i % SERIES.length] }))])}<p class="${c.ok ? "green" : "muted"}">${c.ok ? "수료 조건을 충족했어요." : "16주 이상 + 구성원별 매월 과제 1회 이상"}</p></div>`;
+}
+
+// 평가 그래프
+function evalCharts(fam, d) {
+  const mems = fam.members || [], labels = EVAL_POINTS.map(p => p.name.replace(" 평가", ""));
+  const ser = kind => mems.map((m, i) => ({ name: m.alias, color: SERIES[i % SERIES.length], values: EVAL_POINTS.map(p => { const e = d.evals.find(x => x.kind === kind && x.point === p.key && x.memberId === m.id); return e ? e.total : null; }) }));
+  const any = kind => d.evals.some(e => e.kind === kind);
+  const fams = mems.map((m, i) => { const list = EVAL_POINTS.map(p => d.evals.find(x => x.kind === "FAM" && x.point === p.key && x.memberId === m.id)).filter(Boolean); return { m, i, first: list[0], last: list[list.length - 1] }; }).filter(x => x.first);
+  if (!any("PHQ9") && !any("GAD7") && !fams.length) return `<div class="card"><h2>평가 그래프</h2>${emptyArt("평가를 입력하면 점수 변화가 그래프로 보여요.")}</div>`;
+  return `${any("PHQ9") ? `<div class="card"><h2>PHQ-9 우울 변화</h2>${lineChart({ labels, series: ser("PHQ9"), max: 27, bands: [[0, 4, "#E3F1E7", "최소"], [10, 14, "#FCEBD7", "중등도"], [20, 27, "#FBE0DD", "중증"]] })}</div>` : ""}
+    ${any("GAD7") ? `<div class="card"><h2>GAD-7 불안 변화</h2>${lineChart({ labels, series: ser("GAD7"), max: 21, bands: [[0, 4, "#E3F1E7", "최소"], [10, 14, "#FCEBD7", "중등도"], [15, 21, "#FBE0DD", "중증"]] })}</div>` : ""}
+    ${fams.length ? `<div class="card"><h2>가족기능 자체 평가</h2>${lineChart({ labels, series: ser("FAM"), max: 50 })}${fams.map(x => `<h3>${esc(x.m.alias)}</h3>${radar({ labels: FAM_SHORT, series: x.first === x.last ? [{ name: "시작", color: SERIES[x.i % SERIES.length], values: x.first.items }] : [{ name: "처음", color: "#B7AFA3", values: x.first.items }, { name: "최근", color: SERIES[x.i % SERIES.length], values: x.last.items }] })}`).join("")}</div>` : ""}`;
 }
 function evalSummary(fam, d) {
   const cell = (m, p, kind, bands) => {
@@ -231,8 +311,8 @@ function completion(fam, d) {
 }
 function familyInfo(fid, fam, d) {
   const c = completion(fam, d);
-  return `<div class="card"><h2>구성원과 초대 코드</h2><p class="muted">구성원마다 코드를 전달하면, 그 사람만 자기 과제와 일정을 볼 수 있어요.</p>
-    ${(fam.members || []).map(m => { const inv = d.invites.find(i => i.memberId === m.id && i.active); return `<div class="item"><div><b>${esc(m.alias)}</b> <span class="pill">${esc(m.focus)}</span><div class="muted">초대 코드: <b class="code">${inv ? esc(inv.id) : "없음"}</b></div></div>${inv ? `<button data-copy="${esc(inv.id)}">복사</button>` : `<button data-newinv="${esc(m.id)}">발급</button>`}</div>`; }).join("")}</div>
+  return `<div class="card"><h2>가족 정보</h2><div class="item"><div>관리 번호</div><b class="code">${esc(fam.code || "-")}</b></div><div class="item"><div>프로그램</div><b>${esc(programOf(fam.program).name)}</b></div><div class="item"><div>회기 요일</div><b>매주 ${wd(fam.startDate)}요일</b></div></div><div class="card"><h2>구성원과 초대 코드</h2><p class="muted">구성원마다 코드를 전달하면, 그 사람만 자기 과제와 일정을 볼 수 있어요.</p>
+    ${(fam.members || []).map(m => { const inv = d.invites.find(i => i.memberId === m.id && i.active); return `<div class="item"><div><b>${esc(m.alias)}</b> ${m.role ? `<span class="pill gray">${esc(m.role)}</span> ` : ""}<span class="pill">${esc(m.focus)}</span><div class="muted">초대 코드: <b class="code">${inv ? esc(inv.id) : "없음"}</b></div></div>${inv ? `<button data-copy="${esc(inv.id)}">복사</button>` : `<button data-newinv="${esc(m.id)}">발급</button>`}</div>`; }).join("")}</div>
     <div class="card"><h2>수료 조건</h2><p class="muted">16주 이상 진행 + 구성원별 매월 과제 1회 이상 제출 (계약서 제3조 5항)</p>
       <div class="item"><div>완료한 회기</div><b>${c.done} / 16주 ${c.done >= 16 ? "✓" : ""}</b></div>
       ${c.per.map(p => `<div class="item"><div>${esc(p.mem.alias)} 과제 제출한 달</div><b>${p.met} / ${p.total}개월 ${p.met >= p.total && p.total ? "✓" : ""}</b></div>`).join("")}
@@ -250,10 +330,10 @@ function renderSession(fid, w) {
   watchFamily(fid);
   const d = famData(fid), fam = d.info, s = d.sessions.find(x => x.week === w);
   if (!fam || !s) return shell("불러오는 중", '<p class="muted">회기를 불러오고 있어요…</p>', { back: `#fam/${fid}` });
-  const n = d.notes[String(w)] || {}, p = phaseOf(w);
+  const n = d.notes[String(w)] || {}, p = phaseOf(w, fam);
   const evalP = EVAL_POINTS.find(e => e.week === w);
-  shell(`${w}주차 · ${fmtShort(s.date)} (일)`, `
-    <div class="card"><span class="pill" style="background:${p.color};color:#fff">${p.name}</span>
+  shell(`${w}주차 · ${fmtShort(s.date)} (${wd(s.date)})`, `
+    <div class="card"><div class="row">${phaseIcon(p.n, 36)}<span class="pill" style="background:${p.color};color:#fff">${esc(p.name)}</span></div>
       ${evalP ? `<a class="alert blue" href="#fam/${fid}/eval">${evalP.name} 회기예요 — 평가 입력하기</a>` : ""}
       <label>주제<input id="topic" value="${esc(s.topic)}"></label>
       <label>회기 목표<textarea id="goal" rows="2">${esc(s.goal)}</textarea></label>
@@ -354,16 +434,22 @@ function renderClientHome() {
   watchFamily(fid);
   const d = famData(fid), fam = d.info;
   if (!fam) return shell("마음엠디", '<p class="muted">가족 정보를 불러오고 있어요…</p>');
-  const w = weekOf(fam), sun = nextSunday(), nw = Math.floor((days(sun) - days(fam.startDate)) / 7) + 1;
-  const next = d.sessions.find(s => s.week === nw);
+  const w = weekOf(fam), t = todayIso();
+  const next = d.sessions.filter(s => s.date >= t && s.status !== "absent").sort((a, b) => a.date.localeCompare(b.date))[0];
   const todo = d.homework.filter(h => !h.submission).sort((a, b) => b.week - a.week);
   const doneHw = d.homework.filter(h => h.submission).sort((a, b) => b.week - a.week).slice(0, 5);
   const due = EVAL_POINTS.filter(p => w >= p.week && w <= 53 && !d.evals.some(e => e.point === p.key));
+  const sub = d.homework.filter(h => h.submission).length, all = d.homework.length;
+  const mine = EVAL_POINTS.map(p => d.evals.find(e => e.point === p.key)).filter(Boolean);
+  const ph = phasesFor(fam);
   shell(`${prof.alias}님, 안녕하세요`, `
-    <div class="card hero"><p class="muted">다음 상담 · 일요일</p>${next ? `<h2>${fmt(next.date)} · ${nw}주차</h2><p><b>${esc(next.topic)}</b></p><p class="muted">${esc(next.goal)}</p>` : `<h2>${w < 1 ? "곧 시작해요" : "1년 과정을 마쳤어요"}</h2><p class="muted">시작일 ${fmt(fam.startDate)}</p>`}</div>
+    <div class="card hero"><p class="muted">다음 상담</p>${next ? `<h2>${fmt(next.date)} (${wd(next.date)}) · ${next.week}주차</h2><p><b>${esc(next.topic)}</b></p><p class="muted">${esc(next.goal)}</p>` : `<h2>${w < 1 ? "곧 시작해요" : "1년 과정을 마쳤어요"}</h2><p class="muted">시작일 ${fmt(fam.startDate)}</p>`}</div>
+    <div class="card"><h2>우리 가족의 1년 여정</h2>${journey(w, ph.map(p => p.short))}<p class="muted center">${w < 1 ? "곧 첫 회기를 시작해요" : w > 52 ? "1년 여정을 모두 마쳤어요" : `지금은 ${esc(phaseOf(w, fam).name)} · ${w}주차`}</p></div>
+    <div class="card"><div class="dash">${ring(Math.max(0, Math.min(52, w)) / 52, w < 1 ? "0주" : Math.min(52, w) + "주", "52주 중")}${ring(all ? sub / all : 0, all ? Math.round((sub / all) * 100) + "%" : "-", `과제 ${sub}/${all}`, "#D98C4A")}</div></div>
     ${due.map(p => `<a class="alert blue" href="#selfeval/${p.key}">${p.name} 자체 평가를 작성해 주세요 ›</a>`).join("")}
-    <div class="card"><h2>해야 할 과제 ${todo.length}</h2>${todo.length ? todo.map(h => `<a class="item" href="#h/${h.id}"><span class="wk">${h.week}</span><div><b>${esc(h.title)}</b><div class="muted">${HW_TYPES[h.type] ? HW_TYPES[h.type].name : ""}</div></div><span class="go">›</span></a>`).join("") : '<p class="muted">밀린 과제가 없어요.</p>'}</div>
-    <div class="card"><h2>제출한 과제</h2>${doneHw.length ? doneHw.map(h => `<a class="item" href="#h/${h.id}"><span class="wk">${h.week}</span><div>${esc(h.title)}</div><span class="st ${h.feedback ? "done" : "moved"}">${h.feedback ? "피드백 도착" : "검토 중"}</span></a>`).join("") : '<p class="muted">아직 없어요.</p>'}</div>`);
+    <div class="card"><h2>해야 할 과제 ${todo.length}</h2>${todo.length ? todo.map(h => `<a class="item" href="#h/${h.id}"><span class="wk">${h.week}</span><div><b>${esc(h.title)}</b><div class="muted">${HW_TYPES[h.type] ? HW_TYPES[h.type].name : ""}</div></div><span class="go">›</span></a>`).join("") : emptyArt("밀린 과제가 없어요.")}</div>
+    <div class="card"><h2>제출한 과제</h2>${doneHw.length ? doneHw.map(h => `<a class="item" href="#h/${h.id}"><span class="wk">${h.week}</span><div>${esc(h.title)}</div><span class="st ${h.feedback ? "done" : "moved"}">${h.feedback ? "피드백 도착" : "검토 중"}</span></a>`).join("") : '<p class="muted">아직 없어요.</p>'}</div>
+    ${mine.length ? `<div class="card"><h2>나의 가족기능 평가</h2>${radar({ labels: FAM_SHORT, series: mine.length > 1 ? [{ name: "처음", color: "#B7AFA3", values: mine[0].items }, { name: "최근", color: "#2F6B5E", values: mine[mine.length - 1].items }] : [{ name: "나의 응답", color: "#2F6B5E", values: mine[0].items }] })}</div>` : ""}`);
 }
 function renderClientSchedule() {
   const fid = S.user.profile.familyId;
@@ -371,7 +457,7 @@ function renderClientSchedule() {
   const d = famData(fid), fam = d.info;
   if (!fam) return shell("일정", '<p class="muted">불러오는 중…</p>');
   const w = weekOf(fam);
-  shell("1년 상담 일정", PHASES.map(p => `<div class="card"><h3 style="color:${p.color}">${p.name}</h3>${d.sessions.filter(s => s.week >= p.weeks[0] && s.week <= p.weeks[1]).map(s => `<div class="item ${s.week === w ? "now" : ""}"><span class="wk">${s.week}</span><div><b>${esc(s.topic)}</b><div class="muted">${fmtShort(s.date)} (일)</div></div></div>`).join("")}</div>`).join(""));
+  shell("1년 상담 일정", `<div class="card">${phaseStrip(w, fam.phases)}</div>` + phasesFor(fam).map(p => `<div class="card"><div class="row">${phaseIcon(p.n, 38)}<h3 style="color:${p.color};margin:0">${esc(p.name)}</h3></div>${d.sessions.filter(s => s.week >= p.weeks[0] && s.week <= p.weeks[1]).map(s => `<div class="item ${s.week === w ? "now" : ""}"><span class="wk">${s.week}</span><div><b>${esc(s.topic)}</b><div class="muted">${fmtShort(s.date)} (${wd(s.date)})</div></div></div>`).join("")}</div>`).join(""));
 }
 function renderSelfEval(point) {
   const prof = S.user.profile, fid = prof.familyId, p = EVAL_POINTS.find(x => x.key === point);

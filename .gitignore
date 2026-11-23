@@ -6,3 +6,4 @@ local.properties
 .idea/
 *.iml
 node_modules/
+web/demo.html
