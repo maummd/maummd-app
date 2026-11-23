@@ -77,6 +77,15 @@ jobs:
           cp android/app/build/outputs/bundle/release/*.aab out/release/maummd-release.aab
           cp android/app/build/outputs/apk/release/*.apk out/release/maummd-release.apk
 
+      - name: 설치 파일 확인 (앱 이름 · 고유 이름)
+        working-directory: ${{ github.workspace }}
+        run: |
+          AAPT="$ANDROID_HOME/build-tools/36.0.0/aapt"
+          for f in out/test/maummd-test.apk out/release/maummd-release.apk; do
+            echo "== $f"; "$AAPT" dump badging "$f" | grep -E "^package:|^application-label:"
+          done
+          sha256sum out/release/maummd-release.apk
+
       - uses: actions/upload-artifact@v4
         with:
           name: 마음엠디-테스트용-APK
