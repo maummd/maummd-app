@@ -1,6 +1,6 @@
 // web/index.html 한 파일로 묶습니다: node build.mjs
 import { build } from "esbuild";
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, copyFileSync } from "node:fs";
 
 const out = await build({
   entryPoints: ["src/app.js"], bundle: true, minify: true, format: "iife", target: ["es2020"], write: false,
@@ -14,3 +14,7 @@ mkdirSync("web", { recursive: true });
 const outFile = process.env.DEMO ? "web/demo.html" : "web/index.html";
 writeFileSync(outFile, html);
 console.log(outFile, Math.round(html.length / 1024), "KB");
+
+// 파일 읽기 도구 (PDF · 워드 · 엑셀 · 한글 · 사진)
+mkdirSync("web/lib", { recursive: true });
+for (const f of readdirSync("lib")) copyFileSync("lib/" + f, "web/lib/" + f);

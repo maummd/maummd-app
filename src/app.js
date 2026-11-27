@@ -247,7 +247,7 @@ function renderFamily(fid, tab) {
   const w = weekOf(fam);
   let body = "";
   if (tab === "") {
-    body = `<div class="card">${phaseStrip(w, fam.phases)}</div>` + pastEditor(fam, d) + phasesFor(fam).map(p => `<div class="card"><div class="row">${phaseIcon(p.n, 38)}<h3 style="color:${p.color};margin:0">${esc(p.name)}</h3></div>${d.sessions.filter(s => s.week >= p.weeks[0] && s.week <= p.weeks[1]).map(s => `<a class="item ${s.week === w ? "now" : ""}" href="#fam/${fid}/s/${s.week}"><span class="wk">${s.week}</span><div><b>${esc(s.topic)}</b><div class="muted">${fmtShort(s.date)} (${wd(s.date)})${d.notes[String(s.week)] ? " · 기록 있음" : ""}</div></div><span class="st ${s.status}">${({ planned: "예정", done: "완료", absent: "불참", moved: "변경" })[s.status] || ""}</span></a>`).join("")}</div>`).join("");
+    body = `<div class="card">${phaseStrip(w, fam.phases)}</div>` + IMPORT_CARD("impSess", "📥 회기 기록 불러오기", "예전 회기 기록표(엑셀 · 워드 · PDF · 한글 · 사진)를 올리면 회기 · 날짜를 보고 상태 · 주제 · SOAP 기록을 채워요.") + pastEditor(fam, d) + phasesFor(fam).map(p => `<div class="card"><div class="row">${phaseIcon(p.n, 38)}<h3 style="color:${p.color};margin:0">${esc(p.name)}</h3></div>${d.sessions.filter(s => s.week >= p.weeks[0] && s.week <= p.weeks[1]).map(s => `<a class="item ${s.week === w ? "now" : ""}" href="#fam/${fid}/s/${s.week}"><span class="wk">${s.week}</span><div><b>${esc(s.topic)}</b><div class="muted">${fmtShort(s.date)} (${wd(s.date)})${d.notes[String(s.week)] ? " · 기록 있음" : ""}</div></div><span class="st ${s.status}">${({ planned: "예정", done: "완료", absent: "불참", moved: "변경" })[s.status] || ""}</span></a>`).join("")}</div>`).join("");
   } else if (tab === "dash") {
     body = familyDash(fam, d);
   } else if (tab === "hw") {
@@ -256,11 +256,12 @@ function renderFamily(fid, tab) {
   } else if (tab === "eval") {
     body = evalCharts(fam, d) + evalSummary(fam, d) + `<div class="card"><h2>평가 입력</h2><p class="muted">PHQ-9 · GAD-7은 종이 검사지로 실시한 뒤 문항별 점수를 입력하세요.</p>${EVAL_POINTS.map(p => `<h3>${p.name} <span class="muted">(${p.week}주차 · ${fmtShort((d.sessions.find(x => x.week === p.week) || {}).date || sessionDate(fam, p.week))})</span></h3><div class="row wrap">${(fam.members || []).map(m => `<a class="btn small" href="#fam/${fid}/e/${p.key}/${m.id}">${esc(m.alias)}</a>`).join("")}</div>`).join("")}</div>`;
   } else if (tab === "info") {
-    body = familyInfo(fid, fam, d);
+    body = IMPORT_CARD("impMem", "📥 구성원 불러오기", "명단 파일에서 별칭 · 역할 · 초점을 읽어 구성원을 추가하거나 고쳐요. 실명 대신 별칭을 써 주세요.") + familyInfo(fid, fam, d);
   }
   shell(fam.alias, famTabs(fid, tab) + `<p class="muted center">${esc(programOf(fam.program).name)} · ${meet(fam)} · ${w < 1 ? "시작 전" : w > 52 ? "1년 과정 종료" : `지금 ${w}주차`}</p>` + body, { back: "#families" });
   if (tab === "info") bindFamilyInfo(fid, fam, d);
-  if (tab === "") bindPastEditor(fid, fam, d);
+  if (tab === "") { bindPastEditor(fid, fam, d); const ib = $("#impSess"); if (ib) ib.onclick = () => importSessions(fid, fam, d); }
+  if (tab === "info") { const ib = $("#impMem"); if (ib) ib.onclick = () => importMembers(fid, fam); }
   if (tab === "dash") document.querySelectorAll("[data-doc]").forEach(b => b.onclick = () => makeFamilyDoc(b.dataset.doc, fam, d));
 }
 
@@ -718,4 +719,55 @@ function makeFamilyDoc(kind, fam, d) {
   if (kind === "guide") exportDoc(familyGuideDoc(fam, d), `${nm}_상담안내_${stamp}`);
   else if (kind === "report") { toast("비밀보장 자료예요. 내담자 동의 범위 안에서만 공유하세요"); exportDoc(progressReportDoc(fam, d), `${nm}_상담경과보고서_${stamp}`); }
   else if (kind === "cert") { const n = ($("#certName") && $("#certName").value.trim()) || ""; exportDoc(certDoc(fam, d, n), `${nm}_수료증_${stamp}`); }
+}
+
+// ---------- 파일에서 불러오기 (공용 도구 lib/maumm-reader.js: 엑셀 · 워드 · PDF · 한글 HWPX · 사진 · CSV) ----------
+function IMPORT_CARD(id, title, desc) { return `<div class="card"><div class="spread"><h2 style="margin:0">${title}</h2><button id="${id}">파일 고르기</button></div><p class="muted" style="margin-top:6px">${desc}</p></div>`; }
+function loadReader() { if (window.MReader) return Promise.resolve(window.MReader); return new Promise((res, rej) => { const s = document.createElement("script"); s.src = new URL("lib/maumm-reader.js", location.href).href; s.onload = () => res(window.MReader); s.onerror = () => rej(new Error("파일 읽기 도구를 불러오지 못했어요 — 인터넷 연결을 확인해 주세요")); document.head.appendChild(s); }); }
+const STATUS_OF = v => { v = String(v || ""); return /불참|결석|미참|absent/i.test(v) ? "absent" : /변경|연기|moved/i.test(v) ? "moved" : /완료|참석|출석|진행|done|o|○/i.test(v) ? "done" : ""; };
+async function importSessions(fid, fam, d) {
+  let MR; try { MR = await loadReader(); } catch (e) { return toast(e.message); }
+  const year = (fam.startDate || todayIso()).slice(0, 4);
+  MR.importWizard({ title: "회기 기록 불러오기", applyLabel: "회기에 넣기", toast,
+    hint: "회기(주차) 칸이 있으면 그 회기에, 없으면 같은 날짜의 회기에 넣어요. ‘기록 · 내용’ 칸은 O(관찰)에 넣어요. 비어 있는 칸은 원래 내용을 그대로 둬요.",
+    fields: [{ key: "week", label: "회기(주차)", aliases: ["회기", "주차", "회차", "차시", "week"] }, { key: "date", label: "날짜", aliases: ["일자", "상담일", "회기일", "일시"] },
+      { key: "status", label: "출석 · 상태", aliases: ["상태", "출석", "참석", "결석"] }, { key: "topic", label: "주제", aliases: ["회기 주제", "프로그램", "제목"] },
+      { key: "s", label: "S 주관", aliases: ["주관", "subjective", "호소", "진술"] }, { key: "o", label: "O 관찰 · 기록", aliases: ["관찰", "객관", "objective", "기록", "내용", "상담내용", "메모"] },
+      { key: "a", label: "A 평가", aliases: ["평가", "사정", "assessment", "소견"] }, { key: "p", label: "P 계획", aliases: ["계획", "plan", "과제", "다음"] }],
+    async onApply(rows) {
+      const ops = [], notes = {}, miss = []; let n = 0;
+      rows.forEach(r => {
+        const wk = parseInt(String(r.week).replace(/[^\d]/g, ""), 10), dt = MR.toDate(r.date, year);
+        const s = d.sessions.find(x => wk && x.week === wk) || d.sessions.find(x => dt && x.date === dt);
+        if (!s) { miss.push(r.week || r.date || "?"); return; }
+        const x = { ...s }; delete x.id; const st = STATUS_OF(r.status);
+        if (st) x.status = st; else if (r.s || r.o || r.a || r.p) x.status = x.status === "absent" ? "absent" : "done";
+        if (r.topic) x.topic = r.topic; if (dt && !wk) x.date = dt; else if (dt && wk) x.date = dt;
+        ops.push([`families/${fid}/sessions/${s.week}`, x]);
+        if (r.s || r.o || r.a || r.p) notes[s.week] = { week: s.week, s: r.s || "", o: r.o || "", a: r.a || "", p: r.p || "", risk: false, updatedAt: new Date().toISOString() };
+        n++;
+      });
+      Object.values(notes).forEach(nt => ops.push([`families/${fid}/notes/${nt.week}`, { ...(({ id, ...o }) => o)((d.notes || {})[String(nt.week)] || {}), ...Object.fromEntries(Object.entries(nt).filter(([, v]) => v !== "")) }]));
+      if (!ops.length) throw new Error("맞는 회기를 찾지 못했어요. 회기(주차)나 날짜 칸을 맞춰 주세요");
+      await store.batch(ops);
+      return `회기 ${n}개 · 기록 ${Object.keys(notes).length}개 넣었어요${miss.length ? ` · 못 찾은 줄 ${miss.length}개` : ""}`;
+    } });
+}
+async function importMembers(fid, fam) {
+  let MR; try { MR = await loadReader(); } catch (e) { return toast(e.message); }
+  MR.importWizard({ title: "구성원 불러오기", applyLabel: "구성원에 넣기", toast,
+    hint: `역할은 ${ROLES.join(" · ")}, 초점은 ${FOCUSES.join(" · ")} 중 가장 비슷한 것으로 맞춰요. 같은 별칭이 있으면 역할 · 초점만 고쳐요. 한 가족은 8명까지예요.`,
+    fields: [{ key: "alias", label: "별칭", aliases: ["이름", "구성원", "성명", "닉네임"], required: true }, { key: "role", label: "역할", aliases: ["관계", "가족관계", "구분"] }, { key: "focus", label: "초점", aliases: ["주호소", "목표", "관심"] }],
+    async onApply(rows) {
+      const mem = (fam.members || []).map(m => ({ ...m })), extra = [];
+      const pick = (v, list) => list.find(o => o === v) || list.find(o => v && (o.includes(v) || v.includes(o))) || MR.closest(v, list, 0.3) || list[0];
+      rows.forEach(r => { const alias = r.alias.trim().slice(0, 12); const ex = mem.find(m => m.alias === alias);
+        if (ex) { if (r.role) ex.role = pick(r.role, ROLES); if (r.focus) ex.focus = pick(r.focus, FOCUSES); }
+        else if (mem.length + extra.length < 8) extra.push({ id: "m" + (mem.length + extra.length + 1) + rid(3).toLowerCase(), alias, role: pick(r.role, ROLES), focus: pick(r.focus, FOCUSES) }); });
+      const info = { ...fam, members: mem.concat(extra) }; delete info.id;
+      const ops = [["families/" + fid, info]];
+      extra.forEach(m => ops.push(["invites/" + rid(), { familyId: fid, memberId: m.id, active: true, createdAt: new Date().toISOString() }]));
+      await store.batch(ops);
+      return `새 구성원 ${extra.length}명 · 고친 구성원 ${rows.length - extra.length}명`;
+    } });
 }
