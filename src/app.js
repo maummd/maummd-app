@@ -323,7 +323,7 @@ function completion(fam, d) {
 function familyInfo(fid, fam, d) {
   const c = completion(fam, d);
   return `<div class="card"><h2>가족 정보</h2><div class="item"><div>관리 번호</div><b class="code">${esc(fam.code || "-")}</b></div><div class="item"><div>프로그램</div><b>${esc(programOf(fam.program).name)}</b></div><div class="item"><div>회기 일정</div><b>${meet(fam)}</b></div></div>${scheduleEditor(fam, d)}${memberEditor(fam)}<div class="card"><h2>구성원과 초대 코드</h2><p class="muted">구성원마다 코드를 전달하면, 그 사람만 자기 과제와 일정을 볼 수 있어요.</p>
-    ${(fam.members || []).map(m => { const inv = d.invites.find(i => i.memberId === m.id && i.active); return `<div class="item"><div><b>${esc(m.alias)}</b> ${m.role ? `<span class="pill gray">${esc(m.role)}</span> ` : ""}<span class="pill">${esc(m.focus)}</span><div class="muted">초대 코드: <b class="code">${inv ? esc(inv.id) : "없음"}</b></div></div>${inv ? `<button data-copy="${esc(inv.id)}">복사</button>` : `<button data-newinv="${esc(m.id)}">발급</button>`}</div>`; }).join("")}</div>
+    ${(fam.members || []).map(m => { const inv = d.invites.find(i => i.memberId === m.id && i.active); return `<div class="item"><div><b>${esc(m.alias)}</b> ${m.role ? `<span class="pill gray">${esc(m.role)}</span> ` : ""}<span class="pill">${esc(m.focus)}</span><div class="muted">초대 코드: <b class="code">${inv ? esc(inv.id) : "없음"}</b></div></div>${inv ? `<div class="row" style="gap:6px"><button data-copy="${esc(inv.id)}">복사</button><button class="primary" style="margin-top:0" data-sendinv="${esc(inv.id)}" data-who="${esc(m.alias)}">📤 보내기</button></div>` : `<button data-newinv="${esc(m.id)}">발급</button>`}</div>`; }).join("")}</div>
     <div class="card"><h2>수료 조건</h2><p class="muted">16주 이상 진행 + 구성원별 매월 과제 1회 이상 제출 (계약서 제3조 5항)</p>
       <div class="item"><div>완료한 회기</div><b>${c.done} / 16주 ${c.done >= 16 ? "✓" : ""}</b></div>
       ${c.per.map(p => `<div class="item"><div>${esc(p.mem.alias)} 과제 제출한 달</div><b>${p.met} / ${p.total}개월 ${p.met >= p.total && p.total ? "✓" : ""}</b></div>`).join("")}
@@ -332,6 +332,11 @@ function familyInfo(fid, fam, d) {
 }
 function bindFamilyInfo(fid, fam, d) {
   bindScheduleEditor(fid, fam, d); bindMemberEditor(fid, fam);
+  document.querySelectorAll("[data-sendinv]").forEach(b => b.onclick = async () => {
+    let MR; try { MR = await loadReader(); } catch (e) { return toast(e.message); }
+    const url = /^https?:/.test(location.href) && !/localhost|app\.test/.test(location.host) ? location.origin + location.pathname : "https://maummd.github.io/maummd/";
+    MR.send({ title: `${b.dataset.who}님께 초대 코드 보내기`, subject: "마음엠디 가족 프로그램 초대", text: `[마음엠디] ${b.dataset.who}님, 가족 프로그램에 초대합니다.\n1) 아래 주소를 열고 ‘가족’으로 들어가요\n2) 초대 코드 ${b.dataset.sendinv} 를 입력해 주세요`, link: url });
+  });
   document.querySelectorAll("[data-copy]").forEach(b => b.onclick = async () => { try { await navigator.clipboard.writeText(b.dataset.copy); toast("초대 코드를 복사했어요"); } catch (e) { toast("코드를 길게 눌러 복사해 주세요"); } });
   document.querySelectorAll("[data-newinv]").forEach(b => b.onclick = () => act(() => store.put("invites/" + rid(), { familyId: fid, memberId: b.dataset.newinv, active: true, createdAt: new Date().toISOString() }), "초대 코드를 발급했어요"));
   $("#close").onclick = () => act(() => store.set("families/" + fid, { status: fam.status === "closed" ? "active" : "closed" }), "저장했어요");
