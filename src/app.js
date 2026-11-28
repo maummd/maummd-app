@@ -30,6 +30,20 @@ const memberName = (fam, id) => ((fam.members || []).find(m => m.id === id) || {
 
 let toastT;
 function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), 2400); }
+// 지우기 전에 한 번 묻는 창 (휴대폰 앱에서도 똑같이 보여요)
+function confirmDel(msg, sub = "지우면 되돌릴 수 없어요.") {
+  return new Promise(res => {
+    const bg = document.createElement("div");
+    bg.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px";
+    bg.innerHTML = `<div style="background:#fff;border-radius:18px;padding:20px;max-width:360px;width:100%;box-shadow:0 10px 30px rgba(0,0,0,.2)"><p style="margin:0 0 6px;font-weight:700;font-size:16.5px">${esc(msg)}</p><p class="muted" style="margin:0 0 16px">${esc(sub)}</p><div class="row" style="justify-content:flex-end;gap:8px"><button data-no style="margin:0">취소</button><button data-yes style="margin:0;background:#C0392B;color:#fff;border-color:#C0392B">지우기</button></div></div>`;
+    document.body.appendChild(bg);
+    const done = v => { bg.remove(); res(v); };
+    bg.querySelector("[data-no]").onclick = () => done(false);
+    bg.querySelector("[data-yes]").onclick = () => done(true);
+    bg.onclick = e => { if (e.target === bg) done(false); };
+  });
+}
+const DEL_BTN = (id, label) => `<button id="${id}" style="width:100%;margin-top:4px;background:#FFF4F2;color:#B03A2E;border-color:#F2C9C3">🗑️ ${label}</button>`;
 async function act(fn, ok) {
   try { await fn(); if (ok) toast(ok); return true; }
   catch (e) {
@@ -328,7 +342,7 @@ function familyInfo(fid, fam, d) {
       <div class="item"><div>완료한 회기</div><b>${c.done} / 16주 ${c.done >= 16 ? "✓" : ""}</b></div>
       ${c.per.map(p => `<div class="item"><div>${esc(p.mem.alias)} 과제 제출한 달</div><b>${p.met} / ${p.total}개월 ${p.met >= p.total && p.total ? "✓" : ""}</b></div>`).join("")}
       <p class="${c.ok ? "green" : "muted"}">${c.ok ? "수료 조건을 충족했어요." : "아직 수료 조건을 채우는 중이에요."}</p></div>
-    <div class="card"><h2>가족 관리</h2><div class="row wrap"><button id="close">${fam.status === "closed" ? "종결 취소" : "종결 처리"}</button></div></div>`;
+    <div class="card"><h2>가족 관리</h2><div class="row wrap"><button id="close">${fam.status === "closed" ? "종결 취소" : "종결 처리"}</button></div>${DEL_BTN("delFam", "이 가족 삭제 (회기 · 기록 · 과제 · 평가 모두)")}</div>`;
 }
 function bindFamilyInfo(fid, fam, d) {
   bindScheduleEditor(fid, fam, d); bindMemberEditor(fid, fam);
@@ -340,6 +354,12 @@ function bindFamilyInfo(fid, fam, d) {
   document.querySelectorAll("[data-copy]").forEach(b => b.onclick = async () => { try { await navigator.clipboard.writeText(b.dataset.copy); toast("초대 코드를 복사했어요"); } catch (e) { toast("코드를 길게 눌러 복사해 주세요"); } });
   document.querySelectorAll("[data-newinv]").forEach(b => b.onclick = () => act(() => store.put("invites/" + rid(), { familyId: fid, memberId: b.dataset.newinv, active: true, createdAt: new Date().toISOString() }), "초대 코드를 발급했어요"));
   $("#close").onclick = () => act(() => store.set("families/" + fid, { status: fam.status === "closed" ? "active" : "closed" }), "저장했어요");
+  $("#delFam").onclick = async () => {
+    if (!await confirmDel(`‘${fam.alias}’ 가족을 삭제할까요?`, `회기 ${d.sessions.length}개 · 상담 기록 · 과제 ${d.homework.length}개 · 평가 ${d.evals.length}개 · 초대 코드가 모두 지워져요. 되돌릴 수 없어요. 보관이 필요하면 먼저 현황 탭에서 문서를 내려받아 두세요.`)) return;
+    const paths = [...d.sessions.map(x => `families/${fid}/sessions/${x.id || x.week}`), ...Object.keys(d.notes || {}).map(k => `families/${fid}/notes/${k}`), ...d.homework.map(x => `families/${fid}/homework/${x.id}`), ...d.evals.map(x => `families/${fid}/evals/${x.id}`), ...(d.invites || []).map(x => `invites/${x.id}`)];
+    await act(async () => { for (const p of paths) await store.del(p); await store.del("families/" + fid); }, "가족을 삭제했어요");
+    location.hash = "#families";
+  };
 }
 
 // 이미 진행한 회기 한꺼번에 완료 처리
@@ -400,7 +420,7 @@ function bindScheduleEditor(fid, fam, d) {
 // 구성원 수정 · 추가
 function memberEditor(fam) {
   return `<div class="card"><h2>구성원 수정</h2><p class="muted">별칭 · 역할 · 초점을 바꾸거나 구성원을 추가할 수 있어요. 새 구성원은 초대 코드가 바로 발급돼요.</p>
-    ${(fam.members || []).map((m, i) => `<div class="mem2" data-mi="${i}"><div class="row"><span class="avatar" style="background:${SERIES[i % SERIES.length]}">${esc(m.alias.slice(0, 1))}</span><input data-mf="alias" maxlength="12" value="${esc(m.alias)}"><button class="dice" data-mdice="${i}">🎲</button></div>
+    ${(fam.members || []).map((m, i) => `<div class="mem2" data-mi="${i}"><div class="row"><span class="avatar" style="background:${SERIES[i % SERIES.length]}">${esc(m.alias.slice(0, 1))}</span><input data-mf="alias" maxlength="12" value="${esc(m.alias)}"><button class="dice" data-mdice="${i}">🎲</button><button type="button" data-mdel="${i}" title="구성원 지우기" style="margin:0;padding:6px 9px;background:#FFF4F2;border-color:#F2C9C3">🗑️</button></div>
       <div class="row"><select data-mf="role">${ROLES.map(o => `<option${o === m.role ? " selected" : ""}>${o}</option>`).join("")}</select><select data-mf="focus">${FOCUSES.map(o => `<option${o === m.focus ? " selected" : ""}>${o}</option>`).join("")}</select></div></div>`).join("")}
     <div class="row wrap"><button id="mAdd"${(fam.members || []).length >= 8 ? " disabled" : ""}>+ 구성원 추가</button><button class="primary" id="mSave" style="margin-top:0">구성원 저장</button></div></div>`;
 }
@@ -417,6 +437,16 @@ function bindMemberEditor(fid, fam) {
     return act(() => store.batch(ops), extra.length ? "구성원을 추가하고 초대 코드를 발급했어요" : "구성원을 저장했어요");
   };
   $("#mSave").onclick = () => save();
+  document.querySelectorAll("[data-mdel]").forEach(b => b.onclick = async () => {
+    const row = b.closest("[data-mi]"), m = (fam.members || [])[Number(row.dataset.mi)];
+    if (document.querySelectorAll("[data-mi]").length <= 1) return toast("구성원이 한 명은 있어야 해요");
+    if (!await confirmDel(`‘${m.alias}’ 구성원을 지울까요?`, "이 구성원의 초대 코드도 함께 막혀요. 지난 과제 · 평가 기록은 남아요.")) return;
+    row.remove();
+    const info = { ...fam, members: read() }; delete info.id;
+    const ops = [["families/" + fid, info]];
+    (famData(fid).invites || []).filter(i => i.memberId === m.id && i.active).forEach(i => { const x = { ...i, active: false }; delete x.id; ops.push(["invites/" + i.id, x]); });
+    act(() => store.batch(ops), "구성원을 지웠어요");
+  });
   $("#mAdd").onclick = () => save([{ id: "m" + ((fam.members || []).length + 1) + rid(3).toLowerCase(), alias: randomAlias("member", read().map(m => m.alias)), role: "자녀", focus: "의사소통" }]);
 }
 
@@ -451,7 +481,12 @@ function renderSession(fid, w) {
       <label>안내<textarea id="hwI" rows="2" placeholder="과제 방법을 간단히 적어 주세요"></textarea></label>
       <div class="lbl">받는 사람</div><div class="row wrap">${(fam.members || []).map(m => `<label class="chk"><input type="checkbox" data-to="${m.id}" checked> ${esc(m.alias)}</label>`).join("")}</div>
       <button class="primary" id="giveHw">과제 보내기</button>
-      ${d.homework.filter(h => h.week === w).map(h => `<a class="item" href="#fam/${fid}/h/${h.id}"><div>${esc(memberName(fam, h.forMember))} · ${esc(h.title)}</div><span class="st ${h.feedback ? "done" : h.submission ? "moved" : "planned"}">${h.feedback ? "피드백 완료" : h.submission ? "제출됨" : "미제출"}</span></a>`).join("")}</div>`, { back: `#fam/${fid}` });
+      ${d.homework.filter(h => h.week === w).map(h => `<a class="item" href="#fam/${fid}/h/${h.id}"><div>${esc(memberName(fam, h.forMember))} · ${esc(h.title)}</div><span class="st ${h.feedback ? "done" : h.submission ? "moved" : "planned"}">${h.feedback ? "피드백 완료" : h.submission ? "제출됨" : "미제출"}</span></a>`).join("")}</div>${DEL_BTN("delS", "이 회기 지우기 (일정 · 상담 기록)")}`, { back: `#fam/${fid}` });
+  $("#delS").onclick = async () => {
+    if (!await confirmDel(`${w}주차 회기를 지울까요?`, "회기 일정과 이 회기 상담 기록(SOAP)이 지워져요. 과제는 남아요. 되돌릴 수 없어요.")) return;
+    await act(async () => { await store.del(`families/${fid}/notes/${w}`); await store.del(`families/${fid}/sessions/${s.id || w}`); }, `${w}주차 회기를 지웠어요`);
+    location.hash = `#fam/${fid}`;
+  };
   $("#saveS").onclick = () => {
     const nd = $("#date").value;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(nd)) return toast("날짜를 골라 주세요");
@@ -491,7 +526,13 @@ function renderHomework(fid, hid) {
       ${isClient && !h.feedback && window.MScan ? '<button class="small" id="scanHw" style="margin:2px 0 10px">📷 종이에 쓴 과제 사진으로 채우기</button>' : ""}
       ${isClient && !h.feedback ? '<button class="primary" id="submit">제출하기</button><p class="muted">제출한 뒤에도 피드백을 받기 전까지 고칠 수 있어요.</p>' : ""}
       ${sub.submittedAt ? `<p class="muted">제출: ${fmt(String(sub.submittedAt).slice(0, 10))}</p>` : ""}</div>
-    <div class="card"><h2>선생님 피드백</h2>${S.user.role === "counselor" ? `<textarea id="fb" rows="4" placeholder="서면 피드백을 적어 주세요">${esc(h.feedback)}</textarea><button class="primary" id="saveFb">피드백 저장</button>` : (h.feedback ? `<p class="answer">${esc(h.feedback)}</p>` : '<p class="muted">피드백을 기다리고 있어요.</p>')}</div>`, { back });
+    <div class="card"><h2>선생님 피드백</h2>${S.user.role === "counselor" ? `<textarea id="fb" rows="4" placeholder="서면 피드백을 적어 주세요">${esc(h.feedback)}</textarea><button class="primary" id="saveFb">피드백 저장</button>${DEL_BTN("delHw", "이 과제 지우기")}` : (h.feedback ? `<p class="answer">${esc(h.feedback)}</p>` : '<p class="muted">피드백을 기다리고 있어요.</p>')}</div>`, { back });
+  const dh = $("#delHw");
+  if (dh) dh.onclick = async () => {
+    if (!await confirmDel(`‘${h.title}’ 과제를 지울까요?`, "제출 내용과 피드백도 함께 지워져요. 되돌릴 수 없어요.")) return;
+    await act(() => store.del(`families/${fid}/homework/${hid}`), "과제를 지웠어요");
+    location.hash = `#fam/${fid}/hw`;
+  };
   const sc = $("#scanHw");
   if (sc) sc.onclick = () => MScan.scan({ app: "maummd", color: "#2F6B5E", bare: true, title: type.name, applyLabel: "칸에 넣기", doneMsg: "칸에 넣었어요 — 확인하고 제출해 주세요",
     form: { id: "hw-" + h.type, name: type.name, icon: "📝", kind: "text", free: type.fields.length === 1, fields: type.fields.map(([, label]) => ({ label, aliases: [] })) },
@@ -523,7 +564,21 @@ function renderEvalEntry(fid, point, mid) {
   const fe = get("FAM");
   shell(`${p.name} · ${memberName(fam, mid)}`, `<p class="muted center">문항 점수: 0 전혀 없음 · 1 며칠 동안 · 2 일주일 이상 · 3 거의 매일</p>
     ${block("PHQ9", "PHQ-9 우울 (9문항)", 9, PHQ9_BANDS)}${block("GAD7", "GAD-7 불안 (7문항)", 7, GAD7_BANDS)}
-    <div class="card"><h2>가족기능 자체 평가</h2>${fe ? `<p>총점 <b>${fe.total}</b> / 50 (평균 ${Number(fe.avg).toFixed(1)})</p>${fe.better ? `<div class="lbl">가장 달라진 점</div><p class="answer">${esc(fe.better)}</p>` : ""}${fe.hope ? `<div class="lbl">앞으로 바라는 점</div><p class="answer">${esc(fe.hope)}</p>` : ""}` : '<p class="muted">구성원이 앱에서 직접 작성해요. 아직 제출하지 않았어요.</p>'}</div>`, { back: `#fam/${fid}/eval` });
+    <div class="card"><h2>가족기능 자체 평가</h2>${fe ? `<p>총점 <b>${fe.total}</b> / 50 (평균 ${Number(fe.avg).toFixed(1)})</p>${fe.better ? `<div class="lbl">가장 달라진 점</div><p class="answer">${esc(fe.better)}</p>` : ""}${fe.hope ? `<div class="lbl">앞으로 바라는 점</div><p class="answer">${esc(fe.hope)}</p>` : ""}` : '<p class="muted">구성원이 앱에서 직접 작성해요. 아직 제출하지 않았어요.</p>'}</div>${["PHQ9", "GAD7", "FAM"].some(k => get(k)) ? DEL_BTN("delEv", "이 시점 평가 지우기") : ""}`, { back: `#fam/${fid}/eval` });
+  const de = $("#delEv");
+  if (de) de.onclick = async () => {
+    const list = ["PHQ9", "GAD7", "FAM"].map(get).filter(Boolean);
+    const pick = list.length > 1 ? await new Promise(res => {
+      const bg = document.createElement("div");
+      bg.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px";
+      bg.innerHTML = `<div style="background:#fff;border-radius:18px;padding:20px;max-width:360px;width:100%"><p style="margin:0 0 10px;font-weight:700">어떤 평가를 지울까요?</p>${list.map((e, i) => `<label class="chk" style="display:flex;gap:8px;margin:6px 0"><input type="checkbox" data-pk="${i}" checked> ${e.kind === "FAM" ? "가족기능 자체 평가" : e.kind === "PHQ9" ? "PHQ-9" : "GAD-7"} (${e.total}점)</label>`).join("")}<div class="row" style="justify-content:flex-end;gap:8px;margin-top:12px"><button data-no style="margin:0">취소</button><button data-yes style="margin:0;background:#C0392B;color:#fff;border-color:#C0392B">지우기</button></div></div>`;
+      document.body.appendChild(bg);
+      bg.querySelector("[data-no]").onclick = () => { bg.remove(); res(null); };
+      bg.querySelector("[data-yes]").onclick = () => { const k = [...bg.querySelectorAll("[data-pk]")].filter(x => x.checked).map(x => list[Number(x.dataset.pk)]); bg.remove(); res(k); };
+    }) : (await confirmDel(`${p.name} ${list[0].kind === "FAM" ? "가족기능 자체 평가" : list[0].kind === "PHQ9" ? "PHQ-9" : "GAD-7"}를 지울까요?`) ? list : null);
+    if (!pick || !pick.length) return;
+    await act(async () => { for (const e of pick) await store.del(`families/${fid}/evals/${e.id}`); }, "평가를 지웠어요");
+  };
   const recalc = kind => {
     const vals = Array.from(document.querySelectorAll(`[data-kind="${kind}"]`)).map(s => s.value);
     const total = vals.reduce((a, v) => a + (v === "" ? 0 : Number(v)), 0);
