@@ -442,6 +442,7 @@ function renderSession(fid, w) {
       <label>O · 관찰<textarea id="nO" rows="3">${esc(n.o)}</textarea></label>
       <label>A · 평가<textarea id="nA" rows="3">${esc(n.a)}</textarea></label>
       <label>P · 계획<textarea id="nP" rows="3">${esc(n.p)}</textarea></label>
+      ${window.MScan ? '<button class="small" id="scanN" style="margin:4px 0 8px">📷 활동지 · 생각기록지 스캔 → S에 넣기</button>' : ""}
       <label class="chk"><input type="checkbox" id="risk"${n.risk ? " checked" : ""}> 안전 관련 확인이 필요한 내용이 있었어요</label>
       <button class="primary" id="saveN">기록 저장</button></div>
     <div class="card"><h2>이번 주 과제 내기</h2>
@@ -461,6 +462,9 @@ function renderSession(fid, w) {
     ops.forEach(o => delete o[1].id);
     act(() => store.batch(ops), shift ? `회기와 이후 ${ops.length - 1}개 회기 날짜를 옮겼어요` : "회기를 저장했어요");
   };
+  const scanN = $("#scanN");
+  if (scanN) scanN.onclick = () => MScan.open({ app: "maummd", color: "#2F6B5E", forms: ["thought", "free"], who: (fam.members || []).map(m => ({ id: m.id, name: m.alias })), whoLabel: "구성원", applyLabel: "기록에 넣기", doneMsg: "S 칸에 넣었어요 — 확인한 뒤 기록을 저장해 주세요",
+    onSave: rec => { const t = $("#nS"); const body = rec.fields ? Object.entries(rec.fields).filter(([, v]) => String(v).trim()).map(([k, v]) => (Object.keys(rec.fields).length > 1 ? `· ${k}: ` : "") + String(v).trim()).join("\n") : `총점 ${rec.total}${rec.band ? " (" + rec.band + ")" : ""}`; t.value = (t.value.trim() ? t.value.trim() + "\n\n" : "") + `[${rec.name}${rec.who ? " · " + rec.who.name : ""}]\n` + body + (rec.memo ? "\n메모: " + rec.memo : ""); } });
   $("#saveN").onclick = () => act(() => store.set(`families/${fid}/notes/${w}`, { week: w, s: $("#nS").value, o: $("#nO").value, a: $("#nA").value, p: $("#nP").value, risk: $("#risk").checked, updatedAt: new Date().toISOString() }), "상담 기록을 저장했어요");
   $("#giveHw").onclick = async () => {
     const to = Array.from(document.querySelectorAll("[data-to]")).filter(x => x.checked).map(x => x.dataset.to);
@@ -484,9 +488,14 @@ function renderHomework(fid, hid) {
     : `<div class="lbl">${label}</div><p class="answer">${esc(sub[k]) || '<span class="muted">-</span>'}</p>`).join("");
   shell(h.title, `<div class="card"><p class="muted">${h.week}주차 · ${esc(memberName(fam, h.forMember))} · ${type.name}</p>${h.instructions ? `<p>${esc(h.instructions)}</p>` : ""}</div>
     <div class="card"><h2>${isClient ? (h.feedback ? "내가 쓴 내용" : "작성하기") : "제출 내용"}</h2>${h.submission || isClient ? form : '<p class="muted">아직 제출하지 않았어요.</p>'}
+      ${isClient && !h.feedback && window.MScan ? '<button class="small" id="scanHw" style="margin:2px 0 10px">📷 종이에 쓴 과제 사진으로 채우기</button>' : ""}
       ${isClient && !h.feedback ? '<button class="primary" id="submit">제출하기</button><p class="muted">제출한 뒤에도 피드백을 받기 전까지 고칠 수 있어요.</p>' : ""}
       ${sub.submittedAt ? `<p class="muted">제출: ${fmt(String(sub.submittedAt).slice(0, 10))}</p>` : ""}</div>
     <div class="card"><h2>선생님 피드백</h2>${S.user.role === "counselor" ? `<textarea id="fb" rows="4" placeholder="서면 피드백을 적어 주세요">${esc(h.feedback)}</textarea><button class="primary" id="saveFb">피드백 저장</button>` : (h.feedback ? `<p class="answer">${esc(h.feedback)}</p>` : '<p class="muted">피드백을 기다리고 있어요.</p>')}</div>`, { back });
+  const sc = $("#scanHw");
+  if (sc) sc.onclick = () => MScan.scan({ app: "maummd", color: "#2F6B5E", bare: true, title: type.name, applyLabel: "칸에 넣기", doneMsg: "칸에 넣었어요 — 확인하고 제출해 주세요",
+    form: { id: "hw-" + h.type, name: type.name, icon: "📝", kind: "text", free: type.fields.length === 1, fields: type.fields.map(([, label]) => ({ label, aliases: [] })) },
+    onDone: rec => type.fields.forEach(([k, label]) => { const t = document.querySelector(`[data-k="${k}"]`); if (t && rec.fields[label]) t.value = rec.fields[label]; }) });
   const sb = $("#submit");
   if (sb) sb.onclick = () => {
     const out = { submittedAt: new Date().toISOString(), by: S.user.uid };
@@ -506,7 +515,7 @@ function renderEvalEntry(fid, point, mid) {
   const get = kind => d.evals.find(e => e.kind === kind && e.point === point && e.memberId === mid);
   const block = (kind, label, n, bands) => {
     const e = get(kind), items = e ? e.items : Array(n).fill("");
-    return `<div class="card"><h2>${label}</h2><div class="items">${items.map((v, i) => `<label class="it">${i + 1}<select data-kind="${kind}" data-i="${i}"><option value=""></option>${[0, 1, 2, 3].map(x => `<option${String(v) === String(x) ? " selected" : ""}>${x}</option>`).join("")}</select></label>`).join("")}</div>
+    return `<div class="card"><div class="row" style="justify-content:space-between;align-items:center"><h2 style="margin:0">${label}</h2>${window.MScan ? `<button class="small" data-scan="${kind}">📷 검사지 스캔</button>` : ""}</div><div class="items">${items.map((v, i) => `<label class="it">${i + 1}<select data-kind="${kind}" data-i="${i}"><option value=""></option>${[0, 1, 2, 3].map(x => `<option${String(v) === String(x) ? " selected" : ""}>${x}</option>`).join("")}</select></label>`).join("")}</div>
       <p>총점 <b id="tot-${kind}">${e ? e.total : "-"}</b> · <span id="band-${kind}">${e ? band(bands, e.total) : ""}</span></p>
       ${kind === "PHQ9" ? '<p class="muted">9번 문항(죽음 · 자해에 대한 생각)이 1점 이상이면 홈 화면에 안전 평가 알림이 떠요.</p>' : ""}
       <button class="primary" data-save="${kind}">${label.split(" ")[0]} 저장</button></div>`;
@@ -523,6 +532,11 @@ function renderEvalEntry(fid, point, mid) {
     return { vals, total };
   };
   document.querySelectorAll("[data-kind]").forEach(s => s.onchange = () => recalc(s.dataset.kind));
+  document.querySelectorAll("[data-scan]").forEach(b => b.onclick = () => {
+    const kind = b.dataset.scan;
+    MScan.scan({ app: "maummd", form: kind === "PHQ9" ? "phq9" : "gad7", color: "#2F6B5E", bare: true, applyLabel: "점수 넣기", doneMsg: "점수를 넣었어요 — 확인한 뒤 저장해 주세요",
+      onDone: rec => { rec.items.forEach((v, i) => { const s = document.querySelector(`[data-kind="${kind}"][data-i="${i}"]`); if (s) s.value = String(v); }); recalc(kind); } });
+  });
   document.querySelectorAll("[data-save]").forEach(b => b.onclick = () => {
     const kind = b.dataset.save, { vals, total } = recalc(kind);
     if (vals.some(v => v === "")) return toast("모든 문항에 점수를 넣어 주세요");
@@ -585,13 +599,44 @@ function renderSelfEval(point) {
 function renderAccount() {
   shell("설정", `<div class="card"><h2>계정</h2><p>${esc(S.user.email)}</p><p class="muted">${S.user.role === "counselor" ? "상담자 계정" : "가족 구성원 계정 · " + esc(S.user.profile && S.user.profile.alias)}</p>
     ${store.mode === "firebase" ? '<button id="out">로그아웃</button>' : '<p class="muted">체험 모드에서는 로그인 없이 상담자 · 내담자 화면을 바꿔 볼 수 있어요.</p>'}</div>
+    <div class="card"><h2>🔔 알림</h2><p class="muted">${S.user.role === "counselor" ? "회기 · 평가 시점 · 기록 정리 알림" : "상담 날 · 과제 · 마음 쉼표 알림"}을 켜고, 시간과 요일을 바꿀 수 있어요.</p><button class="primary" id="remind">알림 설정</button></div>
     <div class="card"><h2>개인정보 안내</h2><p class="muted">상담 기록은 상담자만 볼 수 있고, 가족 구성원은 자신의 과제와 평가만 볼 수 있어요. 앱에는 실명 대신 별칭을 사용해 주세요.</p></div>
     <div class="card"><h2>문의</h2><p class="muted">가족상담연구소 마음재활정원 · maumm.org</p></div>`);
   const o = $("#out"); if (o) o.onclick = () => { stopAll(); store.signOut(); };
+  const rb = $("#remind"); if (rb) rb.onclick = () => { if (window.MRemind) MRemind.open(); else toast("알림 도구를 불러오지 못했어요"); };
+}
+
+// ---------- 알림 (공용 도구 lib/maumm-remind.js) ----------
+const sessAt = (s, fam) => new Date(`${s.date}T${(s.time || fam.time || "10:00").slice(0, 5)}:00`).getTime();
+function remindFamilies() {
+  const co = S.user && S.user.role === "counselor";
+  const fids = co ? S.families.filter(f => f.status !== "closed").map(f => f.id) : (S.user && S.user.profile ? [S.user.profile.familyId] : []);
+  fids.forEach(watchFamily);
+  return fids.map(fid => ({ fid, d: famData(fid), fam: famData(fid).info || S.families.find(f => f.id === fid) || {} }));
+}
+function upcomingSessions() {
+  const co = S.user.role === "counselor", t = todayIso();
+  return remindFamilies().flatMap(({ fid, d, fam }) => d.sessions.filter(s => s.date >= t && s.status !== "absent" && s.status !== "done")
+    .map(s => ({ id: fid + "-" + s.week, at: sessAt(s, fam), title: co ? `${fam.alias || "가족"} ${s.week}주차 상담` : `마음엠디 상담 (${s.week}주차)`, body: `${(s.time || fam.time || "").slice(0, 5)} ${s.topic || ""}`.trim() })));
+}
+function evalDue() {
+  const t = todayIso();
+  return remindFamilies().flatMap(({ fid, d, fam }) => EVAL_POINTS.map(p => ({ p, s: d.sessions.find(x => x.week === p.week) })).filter(x => x.s && x.s.date >= t)
+    .map(({ p, s }) => ({ id: fid + "-" + p.key, at: sessAt(s, fam), title: `${fam.alias || "가족"} ${p.name}`, body: "PHQ-9 · GAD-7 · 가족기능 평가를 하는 회기예요" })));
+}
+function remindInit() {
+  if (!window.MRemind || !S.user || S.user.role === "new") return;
+  const co = S.user.role === "counselor";
+  MRemind.init({ app: "maummd-" + (co ? "co" : "cl"), name: "마음엠디", color: "#2F6B5E",
+    presets: co ? [{ id: "notes", title: "상담 기록 정리", body: "오늘 회기 SOAP 기록을 남겨 주세요", rep: "weekly", days: [1, 2, 3, 4, 5], time: "18:00" }, { id: "fb", title: "과제 피드백", body: "제출된 과제에 피드백을 남겨 주세요", rep: "weekly", days: [5], time: "10:00" }]
+      : [{ id: "hw", title: "이번 주 과제", body: "마음엠디 과제를 해 볼까요?", rep: "weekly", days: [3], time: "20:00" }, { id: "rest", title: "마음 쉼표", body: "잠깐 숨을 고르고 오늘 마음을 살펴봐요", rep: "daily", time: "21:30" }],
+    sources: [{ key: "sess", label: co ? "상담 회기" : "상담 날", hint: co ? "모든 가족의 예정된 회기" : "우리 가족 상담 일정", leads: [10, 30, 60, 1440], lead: co ? 30 : 1440, on: true, get: upcomingSessions }]
+      .concat(co ? [{ key: "eval", label: "평가 회기", hint: "시작 · 6개월 · 12개월 평가 주차", leads: [60, 1440, 2880], lead: 1440, on: true, get: evalDue }] : []) });
 }
 
 // ---------- 라우터 ----------
 function render() {
+  if (window.MRemind) MRemind.sync();
   const h = location.hash.slice(1) || "home", parts = h.split("/");
   S.route = h;
   const u = S.user;
@@ -626,6 +671,7 @@ window.addEventListener("hashchange", () => { window.scrollTo(0, 0); render(); }
 store.onAuth(u => {
   stopAll();
   S.user = u;
+  remindInit();
   if (u && u.role === "counselor") {
     S.subs.push(store.listen("families", null, v => { S.families = v; renderSafe(); }, () => toast("가족 목록을 불러오지 못했어요")));
   }

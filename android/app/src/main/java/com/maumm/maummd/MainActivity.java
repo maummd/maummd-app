@@ -35,6 +35,7 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         webView = new WebView(this);
+        ReminderReceiver.ensureChannel(this);
         webView.setBackgroundColor(Color.parseColor("#F5F2EC"));
         setContentView(webView);
 
@@ -78,6 +79,14 @@ public class MainActivity extends Activity {
             }
         });
 
+        // <input type="file"> 를 누르면 파일 · 사진 고르기 (카메라로 바로 찍기 포함)
+        webView.setWebChromeClient(new android.webkit.WebChromeClient() {
+            @Override
+            public boolean onShowFileChooser(WebView view, android.webkit.ValueCallback<Uri[]> callback, FileChooserParams params) {
+                return openChooser(callback, params);
+            }
+        });
+
         webView.addJavascriptInterface(new DocBridge(), "NativeDoc");
 
         if (savedInstanceState != null) webView.restoreState(savedInstanceState);
@@ -92,6 +101,17 @@ public class MainActivity extends Activity {
     /** 화면(JavaScript)의 문서를 안드로이드 인쇄 화면으로 엽니다. 'PDF로 저장'을 고르면 PDF가 되고, 저장한 PDF를 공유할 수 있습니다. */
     private WebView printView; // 인쇄가 끝날 때까지 붙잡아 둡니다
     private class DocBridge {
+
+        /** 알림 예약: 화면(JavaScript)이 앞으로 35일 동안의 알림 목록을 넘겨주면 휴대폰 알림으로 맡겨요. */
+        @android.webkit.JavascriptInterface
+        public void setReminders(String json) {
+            ReminderReceiver.schedule(getApplicationContext(), json == null ? "[]" : json);
+            try { if (new org.json.JSONArray(json).length() > 0) runOnUiThread(MainActivity.this::askNotifyPerm); } catch (Exception ignored) { }
+        }
+        @android.webkit.JavascriptInterface
+        public void testNotification(String title, String body) { ReminderReceiver.show(getApplicationContext(), 7, title, body); }
+        @android.webkit.JavascriptInterface
+        public void askNotify() { runOnUiThread(MainActivity.this::askNotifyPerm); }
         /** 문자 · 카카오톡 · 이메일 · 다른 앱으로 바로 보내기 (글자). kind: sms | kakao | email | any */
         @android.webkit.JavascriptInterface
         public void sendTo(String kind, String name, String b64, String text, String subject, String address) {
@@ -157,5 +177,64 @@ public class MainActivity extends Activity {
     protected void onSaveInstanceState(Bundle outState) {
         super.onSaveInstanceState(outState);
         if (webView != null) webView.saveState(outState);
+    }
+
+    // ---------- 알림 권한 ----------
+    private boolean askedNotify = false;
+    private void askNotifyPerm() {
+        if (askedNotify) return;
+        askedNotify = true;
+        if (android.os.Build.VERSION.SDK_INT >= 33
+            && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{ android.Manifest.permission.POST_NOTIFICATIONS }, 2001);
+        }
+    }
+
+    // ---------- 파일 · 사진 고르기 (카메라로 바로 찍기 포함) ----------
+    private static final int REQ_CHOOSE = 4101;
+    private android.webkit.ValueCallback<Uri[]> chooseCb;
+    private Uri cameraUri;
+    private boolean openChooser(android.webkit.ValueCallback<Uri[]> callback, android.webkit.WebChromeClient.FileChooserParams params) {
+        if (chooseCb != null) chooseCb.onReceiveValue(null);
+        chooseCb = callback; cameraUri = null;
+        String[] acc = params != null ? params.getAcceptTypes() : null;
+        boolean imageOnly = acc != null && acc.length > 0;
+        if (acc != null) for (String a : acc) if (a == null || !a.startsWith("image")) imageOnly = false;
+        Intent pick = new Intent(Intent.ACTION_GET_CONTENT);
+        pick.addCategory(Intent.CATEGORY_OPENABLE);
+        pick.setType(imageOnly ? "image/*" : "*/*");
+        Intent chooser = Intent.createChooser(pick, "파일 · 사진 선택");
+        try {
+            java.io.File dir = new java.io.File(getCacheDir(), "camera");
+            dir.mkdirs();
+            java.io.File f = new java.io.File(dir, "scan_" + System.currentTimeMillis() + ".jpg");
+            cameraUri = androidx.core.content.FileProvider.getUriForFile(this, getPackageName() + ".files", f);
+            Intent cam = new Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE);
+            cam.putExtra(android.provider.MediaStore.EXTRA_OUTPUT, cameraUri);
+            cam.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            if (params != null && params.isCaptureEnabled()) {
+                try { startActivityForResult(cam, REQ_CHOOSE); return true; } catch (Exception e) { /* 카메라 앱이 없으면 고르기 화면으로 */ }
+            }
+            chooser.putExtra(Intent.EXTRA_INITIAL_INTENTS, new Intent[]{ cam });
+        } catch (Exception e) { cameraUri = null; }
+        try { startActivityForResult(chooser, REQ_CHOOSE); } catch (Exception e) { chooseCb = null; return false; }
+        return true;
+    }
+    private void chooserResult(int resultCode, Intent data) {
+        if (chooseCb == null) return;
+        Uri[] r = null;
+        if (resultCode == RESULT_OK) {
+            if (data != null && data.getData() != null) r = new Uri[]{ data.getData() };
+            else if (cameraUri != null) r = new Uri[]{ cameraUri };
+        }
+        chooseCb.onReceiveValue(r);
+        chooseCb = null; cameraUri = null;
+    }
+
+    @Override
+    @SuppressWarnings("deprecation")
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_CHOOSE) chooserResult(resultCode, data);
     }
 }
