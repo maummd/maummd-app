@@ -168,7 +168,7 @@ function renderCounselorHome() {
   const byPhase = [0, 0, 0, 0], before = { n: 0 };
   fams.forEach(f => { const fam = famData(f.id).info || f, w = weekOf(fam); if (w < 1) before.n++; else if (w <= 52) byPhase[Math.floor((w - 1) / 13)]++; });
   const verify = store.mode === "firebase" && !S.user.verified ? `<div class="card warn"><b>상담자 이메일 인증이 필요해요.</b><p class="muted">인증 전에는 가족 등록 · 기록 저장이 막혀요. ① 인증 메일 보내기 → ② 메일의 링크 누르기 → ③ 인증 완료 확인</p><div class="row wrap"><button id="vf">① 인증 메일 보내기</button><button class="primary" id="vchk" style="margin-top:0">③ 인증 완료 확인</button></div></div>` : "";
-  shell("상담자 홈", `<div class="heroart">${gardenHero()}</div>${verify}
+  shell("상담자 홈", `<div class="heroart">${gardenHero()}</div>${verify}${window.MToday ? '<div id="mtoday"></div>' : ""}
     <div class="stats"><div><b>${fams.length}</b><span>진행 중 가족</span></div><div><b>${rows.length}</b><span>이번 주 회기</span></div><div><b>${waiting}</b><span>피드백 대기</span></div><div class="${alerts.some(a => a.lv === "red") ? "hot" : ""}"><b>${alerts.length}</b><span>확인할 일</span></div></div>
     <div class="card"><div class="spread"><h2>이번 주 회기</h2><span class="muted">${fmtShort(t)} ~ ${fmtShort(end)}</span></div>
       ${rows.length ? rows.map(({ f, fam, w, s }) => `<a class="item" href="#fam/${f.id}/s/${w}"><span class="wk" style="background:${phaseOf(w, fam).color};color:#fff">${w}</span><div><b>${esc(fam.alias)}</b> · ${fmtShort(s.date)} (${wd(s.date)})<div class="muted">${esc(s.topic)}</div></div><span class="go">›</span></a>`).join("") : emptyArt("이번 주에 예정된 회기가 없어요.")}
@@ -185,6 +185,7 @@ function renderCounselorHome() {
     let ok = false; try { ok = await store.refresh(); } catch (e) { /* */ }
     if (ok) { S.user.verified = true; toast("인증이 확인됐어요"); render(); } else toast("아직 인증 전이에요. 메일함(스팸함 포함)의 링크를 먼저 눌러 주세요");
   };
+  mountToday();
 }
 function renderFamilies() {
   S.families.forEach(f => watchFamily(f.id));
@@ -613,7 +614,7 @@ function renderClientHome() {
   const sub = d.homework.filter(h => h.submission).length, all = d.homework.length;
   const mine = EVAL_POINTS.map(p => d.evals.find(e => e.point === p.key)).filter(Boolean);
   const ph = phasesFor(fam);
-  shell(`${prof.alias}님, 안녕하세요`, `
+  shell(`${prof.alias}님, 안녕하세요`, `${window.MToday ? '<div id="mtoday"></div>' : ""}
     <div class="card hero"><p class="muted">다음 상담</p>${next ? `<h2>${fmt(next.date)} (${wd(next.date)})${next.time || fam.time ? " " + (next.time || fam.time) : ""} · ${next.week}주차</h2><p><b>${esc(next.topic)}</b></p><p class="muted">${esc(next.goal)}</p>` : `<h2>${w < 1 ? "곧 시작해요" : "1년 과정을 마쳤어요"}</h2><p class="muted">시작일 ${fmt(fam.startDate)}</p>`}</div>
     <div class="card"><h2>우리 가족의 1년 여정</h2>${journey(w, ph.map(p => p.short))}<p class="muted center">${w < 1 ? "곧 첫 회기를 시작해요" : w > 52 ? "1년 여정을 모두 마쳤어요" : `지금은 ${esc(phaseOf(w, fam).name)} · ${w}주차`}</p></div>
     <div class="card"><div class="dash">${ring(Math.max(0, Math.min(52, w)) / 52, w < 1 ? "0주" : Math.min(52, w) + "주", "52주 중")}${ring(all ? sub / all : 0, all ? Math.round((sub / all) * 100) + "%" : "-", `과제 ${sub}/${all}`, "#D98C4A")}</div></div>
@@ -621,6 +622,7 @@ function renderClientHome() {
     <div class="card"><h2>해야 할 과제 ${todo.length}</h2>${todo.length ? todo.map(h => `<a class="item" href="#h/${h.id}"><span class="wk">${h.week}</span><div><b>${esc(h.title)}</b><div class="muted">${HW_TYPES[h.type] ? HW_TYPES[h.type].name : ""}</div></div><span class="go">›</span></a>`).join("") : emptyArt("밀린 과제가 없어요.")}</div>
     <div class="card"><h2>제출한 과제</h2>${doneHw.length ? doneHw.map(h => `<a class="item" href="#h/${h.id}"><span class="wk">${h.week}</span><div>${esc(h.title)}</div><span class="st ${h.feedback ? "done" : "moved"}">${h.feedback ? "피드백 도착" : "검토 중"}</span></a>`).join("") : '<p class="muted">아직 없어요.</p>'}</div>
     ${mine.length ? `<div class="card"><h2>나의 가족기능 평가</h2>${radar({ labels: FAM_SHORT, series: mine.length > 1 ? [{ name: "처음", color: "#B7AFA3", values: mine[0].items }, { name: "최근", color: "#2F6B5E", values: mine[mine.length - 1].items }] : [{ name: "나의 응답", color: "#2F6B5E", values: mine[0].items }] })}</div>` : ""}`);
+  mountToday();
 }
 function renderClientSchedule() {
   const fid = S.user.profile.familyId;
@@ -659,6 +661,24 @@ function renderAccount() {
     <div class="card"><h2>문의</h2><p class="muted">가족상담연구소 마음재활정원 · maumm.org</p></div>`);
   const o = $("#out"); if (o) o.onclick = () => { stopAll(); store.signOut(); };
   const rb = $("#remind"); if (rb) rb.onclick = () => { if (window.MRemind) MRemind.open(); else toast("알림 도구를 불러오지 못했어요"); };
+}
+
+// ---------- 첫 화면 '오늘' 카드: 날씨 + 달력 (공용 도구 lib/maumm-today.js) ----------
+function todayEvents(y, m) {
+  const co = S.user && S.user.role === "counselor", E = {}, add = (ds, x) => (E[ds] = E[ds] || []).push(x), mm = `${y}-${String(m + 1).padStart(2, "0")}`;
+  remindFamilies().forEach(({ fid, d, fam }) => {
+    d.sessions.filter(s => s.date && s.date.slice(0, 7) === mm).forEach(s => add(s.date, { e: s.status === "done" ? "✅" : s.status === "absent" ? "➖" : "💬", t: `${co ? (fam.alias || "가족") + " · " : ""}${s.week}주차 상담${(s.time || fam.time) ? " " + String(s.time || fam.time).slice(0, 5) : ""}${s.topic ? " · " + s.topic : ""}${s.status === "done" ? " (완료)" : s.status === "absent" ? " (결석)" : ""}`, c: "#2F6B5E", fid, w: s.week }));
+    if (co) EVAL_POINTS.forEach(p => { const s = d.sessions.find(x => x.week === p.week); if (s && s.date && s.date.slice(0, 7) === mm) add(s.date, { e: "📊", t: `${fam.alias || "가족"} · ${p.name}`, c: "#3B6FD8" }); });
+  });
+  return E;
+}
+function mountToday() {
+  const el = $("#mtoday"); if (!el || !window.MToday) return;
+  const co = S.user && S.user.role === "counselor";
+  MToday.mount(el, { app: "maummd-" + (co ? "co" : "cl"), color: "#2F6B5E", soft: "#EEF4F1", fold: co, events: todayEvents,
+    note: co ? "달력: 💬 회기 · ✅ 완료 · 📊 평가" : "💬 상담 날을 달력에서 볼 수 있어요",
+    dayLabel: co ? "회기 보기" : "일정 보기",
+    onDay: ds => { const L = todayEvents(+ds.slice(0, 4), +ds.slice(5, 7) - 1)[ds] || []; const s = L.find(x => x.fid); if (co && s) location.hash = `#fam/${s.fid}/s/${s.w}`; else if (!co) location.hash = "#sched"; } });
 }
 
 // ---------- 알림 (공용 도구 lib/maumm-remind.js) ----------
